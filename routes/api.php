@@ -3,13 +3,19 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\PromotionController;
+
 use App\Http\Controllers\Gym\Admin\ExerciseController as GymExerciseController;
 use App\Http\Controllers\Gym\Admin\DailyTemplateController as GymDailyTemplateController;
 use App\Http\Controllers\Gym\Admin\WeeklyTemplateController as GymWeeklyTemplateController;
 use App\Http\Controllers\Gym\Admin\WeeklyAssignmentController as GymWeeklyAssignmentController;
+
 use App\Http\Controllers\Gym\Mobile\MyPlanController as GymMyPlanController;
+
 use App\Http\Controllers\Admin\AssignmentController as AdminAssignmentController;
+use App\Http\Controllers\Admin\ProfesorSocioController;
+
 use App\Http\Controllers\Gym\Professor\AssignmentController as ProfessorAssignmentController;
+
 use Illuminate\Support\Facades\Route;
 
 // Rutas de autenticación
@@ -78,6 +84,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('assignments/{assignment}/pause', [AdminAssignmentController::class, 'pause']);
         Route::post('assignments/{assignment}/reactivate', [AdminAssignmentController::class, 'reactivate']);
         Route::post('assignments/{assignment}/complete', [AdminAssignmentController::class, 'complete']);
+
+        // ==============================
+        // Asignación de Socios (API users) a Profesores
+        // ==============================
+        Route::get('profesores', [ProfesorSocioController::class, 'profesores']);
+        Route::get('socios', [ProfesorSocioController::class, 'socios']);
+
+        Route::get('profesores/{profesor}/socios', [ProfesorSocioController::class, 'sociosPorProfesor']);
+        Route::post('profesores/{profesor}/socios', [ProfesorSocioController::class, 'syncSocios']);
     });
 
     // ✅ Compatibilidad por el doble /api de tu frontend:
@@ -85,6 +100,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('api')->group(function () {
         Route::prefix('admin')->middleware('admin')->group(function () {
             Route::get('users', [UserController::class, 'index']);
+
+            // Compat: /api/api/admin/...
+            Route::get('profesores', [ProfesorSocioController::class, 'profesores']);
+            Route::get('socios', [ProfesorSocioController::class, 'socios']);
+
+            Route::get('profesores/{profesor}/socios', [ProfesorSocioController::class, 'sociosPorProfesor']);
+            Route::post('profesores/{profesor}/socios', [ProfesorSocioController::class, 'syncSocios']);
         });
     });
 

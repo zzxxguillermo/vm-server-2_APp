@@ -612,4 +612,36 @@ class User extends Authenticatable
             'student_id'     // Local key en professor_student_assignments
         )->where('professor_student_assignments.status', 'active');
     }
+        /**
+     * Socios (usuarios API) asignados a este profesor
+     * Pivot: professor_socio (professor_id, socio_id, assigned_by)
+     */
+    public function assignedSocios()
+    {
+        return $this->belongsToMany(
+            User::class,
+            'professor_socio',
+            'professor_id',
+            'socio_id'
+        )->withTimestamps()
+         ->withPivot(['assigned_by'])
+         ->where('users.user_type', UserType::API);
+    }
+
+    /**
+     * Profesores asignados a este socio (usuario API)
+     * Pivot: professor_socio (professor_id, socio_id, assigned_by)
+     */
+    public function assignedProfessors()
+    {
+        return $this->belongsToMany(
+            User::class,
+            'professor_socio',
+            'socio_id',
+            'professor_id'
+        )->withTimestamps()
+         ->withPivot(['assigned_by'])
+         ->where('users.is_professor', true);
+    }
+
 }
