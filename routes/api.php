@@ -1,5 +1,7 @@
 <?php
 
+use Illuminate\Support\Facades\Route;
+
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\PromotionController;
@@ -12,12 +14,12 @@ use App\Http\Controllers\Gym\Admin\WeeklyAssignmentController as GymWeeklyAssign
 use App\Http\Controllers\Gym\Mobile\MyPlanController as GymMyPlanController;
 
 use App\Http\Controllers\Admin\AssignmentController as AdminAssignmentController;
-use App\Http\Controllers\Admin\ProfesorSocioController;
+use App\Http\Controllers\Admin\ProfesorSocioController as AdminProfesorSocioController;
 
 use App\Http\Controllers\Gym\Professor\AssignmentController as ProfessorAssignmentController;
-use App\Http\Controllers\Profesor\SocioController as ProfesorSocioController;
 
-use Illuminate\Support\Facades\Route;
+// ✅ Nuevo controller PROFESOR para auto-asignación de socios
+use App\Http\Controllers\Profesor\SocioController as ProfesorSocioController;
 
 // Rutas de autenticación
 Route::prefix('auth')->group(function () {
@@ -43,7 +45,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('needing-refresh', [UserController::class, 'needingRefresh']);
         Route::post('{user}/change-type', [UserController::class, 'changeType']);
 
-        // Cache y mantenimiento (CORREGIDO: sin /users duplicado)
+        // Cache y mantenimiento
         Route::delete('cache/{dni}', [UserController::class, 'clearUserCache']);
         Route::delete('cache', [UserController::class, 'clearAllCache']);
         Route::post('{id}/restore', [UserController::class, 'restore']);
@@ -69,11 +71,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Admin - Gestión (protegido por rol 'admin')
     Route::prefix('admin')->middleware('admin')->group(function () {
 
-        // ✅ ESTE ES EL ENDPOINT QUE TU FRONTEND NECESITA:
-        // GET /api/admin/users?...  (y también vamos a soportar /api/api/admin/users)
         Route::get('users', [UserController::class, 'index']);
-        // Si más adelante querés:
-        // Route::get('users/{user}', [UserController::class, 'show']);
 
         // Asignaciones profesor-estudiante
         Route::apiResource('assignments', AdminAssignmentController::class);
@@ -81,37 +79,34 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('students/unassigned', [AdminAssignmentController::class, 'unassignedStudents']);
         Route::get('assignments-stats', [AdminAssignmentController::class, 'stats']);
 
-        // Acciones específicas de asignaciones
         Route::post('assignments/{assignment}/pause', [AdminAssignmentController::class, 'pause']);
         Route::post('assignments/{assignment}/reactivate', [AdminAssignmentController::class, 'reactivate']);
         Route::post('assignments/{assignment}/complete', [AdminAssignmentController::class, 'complete']);
 
         // ==============================
-        // Asignación de Socios (API users) a Profesores
+        // Admin: Asignación de socios a profesores
         // ==============================
-        Route::get('profesores', [ProfesorSocioController::class, 'profesores']);
-        Route::get('socios', [ProfesorSocioController::class, 'socios']);
+        Route::get('profesores', [AdminProfesorSocioController::class, 'profesores']);
+        Route::get('socios', [AdminProfesorSocioController::class, 'socios']);
 
-        Route::get('profesores/{profesor}/socios', [ProfesorSocioController::class, 'sociosPorProfesor']);
-        Route::post('profesores/{profesor}/socios', [ProfesorSocioController::class, 'syncSocios']);
+        Route::get('profesores/{profesor}/socios', [AdminProfesorSocioController::class, 'sociosPorProfesor']);
+        Route::post('profesores/{profesor}/socios', [AdminProfesorSocioController::class, 'syncSocios']);
     });
 
-    // ✅ Compatibilidad por el doble /api de tu frontend:
-    // Tu front llama /api/api/admin/users ... así que agregamos un prefijo "api" extra.
+    // ✅ Compatibilidad por el doble /api de tu frontend (si aún lo necesitás)
     Route::prefix('api')->group(function () {
         Route::prefix('admin')->middleware('admin')->group(function () {
             Route::get('users', [UserController::class, 'index']);
 
-            // Compat: /api/api/admin/...
-            Route::get('profesores', [ProfesorSocioController::class, 'profesores']);
-            Route::get('socios', [ProfesorSocioController::class, 'socios']);
+            Route::get('profesores', [AdminProfesorSocioController::class, 'profesores']);
+            Route::get('socios', [AdminProfesorSocioController::class, 'socios']);
 
-            Route::get('profesores/{profesor}/socios', [ProfesorSocioController::class, 'sociosPorProfesor']);
-            Route::post('profesores/{profesor}/socios', [ProfesorSocioController::class, 'syncSocios']);
+            Route::get('profesores/{profesor}/socios', [AdminProfesorSocioController::class, 'sociosPorProfesor']);
+            Route::post('profesores/{profesor}/socios', [AdminProfesorSocioController::class, 'syncSocios']);
         });
     });
 
-    // Admin Gym (protegido por rol 'profesor')
+    // Admin Gym (protegido por rol 'professor')
     Route::prefix('admin/gym')->middleware('professor')->group(function () {
         Route::apiResource('exercises', GymExerciseController::class);
         Route::apiResource('daily-templates', GymDailyTemplateController::class);
@@ -122,6 +117,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Profesor (protegido por rol 'professor')
     Route::prefix('professor')->middleware('professor')->group(function () {
+
+        // ---- existente (plan/assignments)
         Route::get('my-students', [ProfessorAssignmentController::class, 'myStudents']);
         Route::get('my-stats', [ProfessorAssignmentController::class, 'myStats']);
 
@@ -136,19 +133,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('today-sessions', [ProfessorAssignmentController::class, 'todaySessions']);
         Route::get('weekly-calendar', [ProfessorAssignmentController::class, 'weeklyCalendar']);
 
-        // ==============================
-        // Gestión de socios (usuarios API) por el profesor
-        // GET  /api/profesor/socios                    -> listar asignados
-        // GET  /api/profesor/socios/disponibles        -> listar disponibles
-        // POST /api/profesor/socios/{socioId}          -> asignar socio
-        // DELETE /api/profesor/socios/{socioId}        -> desasignar socio
-        // ==============================
-        Route::prefix('socios')->group(function () {
-            Route::get('/', [ProfesorSocioController::class, 'index']);
-            Route::get('/disponibles', [ProfesorSocioController::class, 'disponibles']);
-            Route::post('/{socio}', [ProfesorSocioController::class, 'store']);
-            Route::delete('/{socio}', [ProfesorSocioController::class, 'destroy']);
-        });
+        // ---- NUEVO: auto-asignación de socios
+        Route::get('socios', [ProfesorSocioController::class, 'index']);
+        Route::get('socios/disponibles', [ProfesorSocioController::class, 'disponibles']);
+        Route::post('socios/{socioId}', [ProfesorSocioController::class, 'asignarme']);
+        Route::delete('socios/{socioId}', [ProfesorSocioController::class, 'quitar']);
     });
 
     // Estudiantes
@@ -174,4 +163,3 @@ Route::prefix('sys')->group(function () {
 
 // Incluir rutas de administración
 require __DIR__.'/admin.php';
-
