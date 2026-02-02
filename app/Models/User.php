@@ -616,7 +616,7 @@ class User extends Authenticatable
      * Socios (usuarios API) asignados a este profesor
      * Pivot: professor_socio (professor_id, socio_id, assigned_by)
      */
-    public function assignedSocios()
+    public function sociosAsignados()
     {
         return $this->belongsToMany(
             User::class,
@@ -624,15 +624,22 @@ class User extends Authenticatable
             'professor_id',
             'socio_id'
         )->withTimestamps()
-         ->withPivot(['assigned_by'])
-         ->where('users.user_type', UserType::API);
+         ->withPivot(['assigned_by']);
+    }
+
+    /**
+     * Alias para compatibilidad
+     */
+    public function assignedSocios()
+    {
+        return $this->sociosAsignados();
     }
 
     /**
      * Profesores asignados a este socio (usuario API)
      * Pivot: professor_socio (professor_id, socio_id, assigned_by)
      */
-    public function assignedProfessors()
+    public function profesoresAsignados()
     {
         return $this->belongsToMany(
             User::class,
@@ -640,8 +647,15 @@ class User extends Authenticatable
             'socio_id',
             'professor_id'
         )->withTimestamps()
-         ->withPivot(['assigned_by'])
-         ->where('users.is_professor', true);
+         ->withPivot(['assigned_by']);
+    }
+
+    /**
+     * Alias para compatibilidad
+     */
+    public function assignedProfessors()
+    {
+        return $this->profesoresAsignados();
     }
 
 }

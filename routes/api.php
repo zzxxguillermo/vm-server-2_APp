@@ -15,6 +15,7 @@ use App\Http\Controllers\Admin\AssignmentController as AdminAssignmentController
 use App\Http\Controllers\Admin\ProfesorSocioController;
 
 use App\Http\Controllers\Gym\Professor\AssignmentController as ProfessorAssignmentController;
+use App\Http\Controllers\Profesor\SocioController as ProfesorSocioController;
 
 use Illuminate\Support\Facades\Route;
 
@@ -134,6 +135,20 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::get('today-sessions', [ProfessorAssignmentController::class, 'todaySessions']);
         Route::get('weekly-calendar', [ProfessorAssignmentController::class, 'weeklyCalendar']);
+
+        // ==============================
+        // Gestión de socios (usuarios API) por el profesor
+        // GET  /api/profesor/socios                    -> listar asignados
+        // GET  /api/profesor/socios/disponibles        -> listar disponibles
+        // POST /api/profesor/socios/{socioId}          -> asignar socio
+        // DELETE /api/profesor/socios/{socioId}        -> desasignar socio
+        // ==============================
+        Route::prefix('socios')->group(function () {
+            Route::get('/', [ProfesorSocioController::class, 'index']);
+            Route::get('/disponibles', [ProfesorSocioController::class, 'disponibles']);
+            Route::post('/{socio}', [ProfesorSocioController::class, 'store']);
+            Route::delete('/{socio}', [ProfesorSocioController::class, 'destroy']);
+        });
     });
 
     // Estudiantes

@@ -60,7 +60,7 @@ class ProfesorSocioController extends Controller
     {
         abort_unless($profesor->is_professor, 404);
 
-        $q = $profesor->sociosAsignados()->where('user_type', 'api');
+        $q = $profesor->sociosAsignados();
 
         if ($search = trim((string) $request->get('search'))) {
             $q->where(function ($w) use ($search) {
