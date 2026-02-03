@@ -38,6 +38,11 @@ class PadronSyncCommand extends Command
             $since = $this->determineSince();
             $perPage = (int) $this->option('per-page');
 
+            // Normalizar formato de $since para vmServer (Y-m-d\TH:i:s\Z)
+            if (!empty($since)) {
+                $since = Carbon::parse($since)->utc()->format('Y-m-d\TH:i:s\Z');
+            }
+
             $this->info("🔄 Iniciando sincronización de socios desde vmServer");
             $this->info("  • Desde: {$since}");
             $this->info("  • Por página: {$perPage}");
@@ -84,8 +89,9 @@ class PadronSyncCommand extends Command
                 $page++;
             }
 
-            // Actualizar last_sync
+            // Actualizar last_sync - normalizar formato para vmServer (Y-m-d\TH:i:s\Z)
             $syncTime = $lastServerTime ?? now()->toIso8601String();
+            $syncTime = Carbon::parse($syncTime)->utc()->format('Y-m-d\TH:i:s\Z');
             SyncState::setValue('padron_last_sync_at', $syncTime);
 
             $this->newLine();
