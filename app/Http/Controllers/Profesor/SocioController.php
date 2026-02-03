@@ -2,6 +2,124 @@
 
 namespace App\Http\Controllers\Profesor;
 
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use Illuminate\Http\Request;
+
+class SocioController extends Controller
+{
+    /**
+     * Lista de socios asignados al profesor autenticado
+     */
+    public function index(Request $request)
+    {
+        $user = $request->user();
+
+        // seguridad: middleware 'professor' debe garantizar is_professor
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+        }
+
+        $perPage = (int) $request->query('per_page', 50);
+        $perPage = max(1, min(200, $perPage));
+
+        $q = $request->query('q');
+
+        $query = $user->sociosAsignados()->select([
+            'users.id', 'users.dni', 'users.socio_id', 'users.socio_n',
+            'users.apellido', 'users.nombre', 'users.barcode', 'users.saldo',
+            'users.semaforo', 'users.estado_socio', 'users.foto_url', 'users.avatar_path'
+        ])->orderBy('users.apellido')->orderBy('users.nombre');
+
+        if ($q) {
+            $query->where(function ($w) use ($q) {
+                $w->where('users.dni', 'like', "%{$q}%")
+                  ->orWhere('users.socio_id', 'like', "%{$q}%")
+                  ->orWhere('users.socio_n', 'like', "%{$q}%")
+                  ->orWhere('users.apellido', 'like', "%{$q}%")
+                  ->orWhere('users.nombre', 'like', "%{$q}%")
+                  ->orWhereRaw("CONCAT(users.apellido, ' ', users.nombre) LIKE ?", ["%{$q}%"]);
+            });
+        }
+
+        $result = $query->paginate($perPage)->appends($request->query());
+
+        return response()->json(['success' => true, 'data' => $result]);
+    }
+
+    /**
+     * Socios API disponibles para asignar (no asignados a este profesor)
+     */
+    public function disponibles(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+        }
+
+        $perPage = (int) $request->query('per_page', 50);
+        $perPage = max(1, min(200, $perPage));
+        $q = $request->query('q');
+
+        // IDs de socios ya asignados a este profesor
+        $assignedIds = $user->sociosAsignados()->pluck('users.id')->toArray();
+
+        $query = User::query()
+            ->where('user_type', 'API')
+            ->whereNotIn('id', $assignedIds)
+            ->select([
+                'id', 'dni', 'socio_id', 'socio_n', 'apellido', 'nombre',
+                'barcode', 'saldo', 'semaforo', 'estado_socio', 'foto_url', 'avatar_path'
+            ])
+            ->orderBy('apellido')->orderBy('nombre');
+
+        if ($q) {
+            $query->where(function ($w) use ($q) {
+                $w->where('dni', 'like', "%{$q}%")
+                  ->orWhere('socio_id', 'like', "%{$q}%")
+                  ->orWhere('socio_n', 'like', "%{$q}%")
+                  ->orWhere('apellido', 'like', "%{$q}%")
+                  ->orWhere('nombre', 'like', "%{$q}%")
+                  ->orWhereRaw("CONCAT(apellido, ' ', nombre) LIKE ?", ["%{$q}%"]);
+            });
+        }
+
+        $result = $query->paginate($perPage)->appends($request->query());
+
+        return response()->json(['success' => true, 'data' => $result]);
+    }
+
+    // Opcionales: store/destroy placeholders (ya existen rutas que los usan)
+    public function store(Request $request, User $socio)
+    {
+        $prof = $request->user();
+        if (!$prof) return response()->json(['success'=>false],401);
+
+        // Evitar re-asignar
+        if ($prof->sociosAsignados()->where('users.id', $socio->id)->exists()) {
+            return response()->json(['success'=>false, 'message'=>'Already assigned'], 409);
+        }
+
+        $prof->sociosAsignados()->attach($socio->id, ['assigned_by' => $prof->id]);
+
+        return response()->json(['success' => true, 'data' => $socio]);
+    }
+
+    public function destroy(Request $request, User $socio)
+    {
+        $prof = $request->user();
+        if (!$prof) return response()->json(['success'=>false],401);
+
+        $prof->sociosAsignados()->detach($socio->id);
+
+        return response()->json(['success' => true]);
+    }
+}
+<?php
+
+namespace App\Http\Controllers\Profesor;
+
 use App\Enums\UserType;
 use App\Http\Controllers\Controller;
 use App\Models\User;

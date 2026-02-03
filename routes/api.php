@@ -140,6 +140,29 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('socios/{socio}', [ProfesorSocioController::class, 'destroy']);
     });
 
+    // Alias en español: 'profesor' — mantiene compatibilidad con frontend en español
+    Route::prefix('profesor')->middleware('professor')->group(function () {
+        Route::get('my-students', [ProfessorAssignmentController::class, 'myStudents']);
+        Route::get('my-stats', [ProfessorAssignmentController::class, 'myStats']);
+
+        Route::post('assign-template', [ProfessorAssignmentController::class, 'assignTemplate']);
+        Route::get('assignments/{assignment}', [ProfessorAssignmentController::class, 'show']);
+        Route::put('assignments/{assignment}', [ProfessorAssignmentController::class, 'updateAssignment']);
+        Route::delete('assignments/{assignment}', [ProfessorAssignmentController::class, 'unassignTemplate']);
+
+        Route::get('students/{student}/progress', [ProfessorAssignmentController::class, 'studentProgress']);
+        Route::post('progress/{progress}/feedback', [ProfessorAssignmentController::class, 'addFeedback']);
+
+        Route::get('today-sessions', [ProfessorAssignmentController::class, 'todaySessions']);
+        Route::get('weekly-calendar', [ProfessorAssignmentController::class, 'weeklyCalendar']);
+
+        // Auto-asignación de socios (alias en español)
+        Route::get('socios', [\App\Http\Controllers\Profesor\SocioController::class, 'index']);
+        Route::get('socios/disponibles', [\App\Http\Controllers\Profesor\SocioController::class, 'disponibles']);
+        Route::post('socios/{socio}', [\App\Http\Controllers\Profesor\SocioController::class, 'store']);
+        Route::delete('socios/{socio}', [\App\Http\Controllers\Profesor\SocioController::class, 'destroy']);
+    });
+
     // Estudiantes
     Route::prefix('student')->group(function () {
         Route::get('my-templates', [\App\Http\Controllers\Gym\Student\AssignmentController::class, 'myTemplates']);
