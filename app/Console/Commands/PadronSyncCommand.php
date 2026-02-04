@@ -226,16 +226,23 @@ class PadronSyncCommand extends Command
      */
     protected function mapItemToRow(array $item): array
     {
-        // Asegurar que raw/hab_controles_raw siempre sean string JSON (si vienen como array)
-        // (Esto evita el "Array to string conversion" si esos campos llegan no escalares)
-        $raw = $item['raw'] ?? $item; // si tu API no manda 'raw', guardamos el item completo
+        // Asegurar que raw siempre sea string JSON
+        $raw = $item['raw'] ?? $item;
         if (is_array($raw) || is_object($raw)) {
             $raw = json_encode($raw, JSON_UNESCAPED_UNICODE);
         }
 
-        $habRaw = $item['hab_controles_raw'] ?? null;
-        if (is_array($habRaw) || is_object($habRaw)) {
-            $habRaw = json_encode($habRaw, JSON_UNESCAPED_UNICODE);
+        // Normalizar hab_controles: guardar original en hab_controles_raw, valor normalizado en hab_controles
+        $habControlsRaw = $item['hab_controles'] ?? null;
+        $habControls = $this->normalizeHabControles($habControlsRaw, $item['dni'] ?? null, $item['sid'] ?? null);
+
+        $habControlsRawJson = null;
+        if ($habControlsRaw !== null) {
+            if (is_array($habControlsRaw) || is_object($habControlsRaw)) {
+                $habControlsRawJson = json_encode($habControlsRaw, JSON_UNESCAPED_UNICODE);
+            } else {
+                $habControlsRawJson = is_string($habControlsRaw) ? $habControlsRaw : json_encode($habControlsRaw);
+            }
         }
 
         return [
@@ -247,10 +254,52 @@ class PadronSyncCommand extends Command
             'semaforo' => $item['semaforo'] ?? null,
             'ult_impago' => $item['ult_impago'] ?? null,
             'acceso_full' => $item['acceso_full'] ?? null,
-            'hab_controles' => $item['hab_controles'] ?? null,
-            'hab_controles_raw' => $habRaw,
+            'hab_controles' => $habControls,
+            'hab_controles_raw' => $habControlsRawJson,
             'raw' => $raw,
         ];
+    }
+
+    /**
+     * Normalizar hab_controles: null o [] => 0, string/int => int, otro => 0
+     */
+    protected function normalizeHabControles($value, ?string $dni, ?string $sid): int
+    {
+        // Si es null o array vacío => 0
+        if ($value === null || (is_array($value) && empty($value))) {
+            if ($value === null || empty($value)) {
+                logger()->warning('PadronSync: hab_controles normalized to 0 (null or empty array)', [
+                    'original_type' => gettype($value),
+                    'dni' => $dni,
+                    'sid' => $sid,
+                ]);
+            }
+            return 0;
+        }
+
+        // Si es array no vacío o object => 0
+        if (is_array($value) || is_object($value)) {
+            logger()->warning('PadronSync: hab_controles normalized to 0 (non-empty array/object)', [
+                'original_type' => gettype($value),
+                'dni' => $dni,
+                'sid' => $sid,
+            ]);
+            return 0;
+        }
+
+        // Si es string o number => castealo a int
+        if (is_string($value) || is_numeric($value)) {
+            return (int) $value;
+        }
+
+        // Otro tipo raro => 0
+        logger()->warning('PadronSync: hab_controles normalized to 0 (unknown type)', [
+            'original_type' => gettype($value),
+            'original_value' => $value,
+            'dni' => $dni,
+            'sid' => $sid,
+        ]);
+        return 0;
     }
 
     /**
