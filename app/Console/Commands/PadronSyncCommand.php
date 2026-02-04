@@ -39,18 +39,20 @@ class PadronSyncCommand extends Command
             // Punto 1: Obtener $since sin normalizar
             $since = $this->determineSince();
             $perPage = (int) $this->option('per-page');
-            $this->line("[LOG] $since RAW (sin normalizar): {$since}");
+            $this->line("[SYNC] since RAW: {$since}");
 
             // Punto 3: Normalizar formato de $since para vmServer (Y-m-d\TH:i:sZ, Z literal)
             if (!empty($since)) {
                 $sinceRaw = $since;
                 $since = Carbon::parse($since)->utc()->format('Y-m-d\TH:i:s') . 'Z';
-                $this->line("[LOG] RAW (sin normalizar): {$sinceRaw}");
-                $this->line("[LOG] NORMALIZADO: {$since}");
+                $this->line("[SYNC] since NORMALIZADO: {$since}");
+            } else {
+                $since = null; // No enviar updated_since si está vacío
+                $this->line("[SYNC] since is empty: updated_since will NOT be sent");
             }
 
             $this->info("🔄 Iniciando sincronización de socios desde vmServer");
-            $this->info("  • Desde: {$since}");
+            $this->info("  • Desde: " . ($since ?? 'N/A (no filter)'));
             $this->info("  • Por página: {$perPage}");
             $this->newLine();
 
@@ -64,32 +66,53 @@ class PadronSyncCommand extends Command
             do {
                 $this->info("📄 Obteniendo página {$page}...");
 
-                // Punto 4: Armar params para vmServer
+                // Punto 4: Armar params para vmServer (sin updated_since si está vacío)
                 $params = [
-                    'updated_since' => $since,
                     'page' => $page,
                     'per_page' => $perPage,
                 ];
+                if (!empty($since)) {
+                    $params['updated_since'] = $since;
+                }
 
-                $this->line('[LOG] Params enviados a client.fetchSocios(): ' . json_encode($params));
+                logger()->info('[SYNC] Fetching page', [
+                    'page' => $page,
+                    'since' => $since,
+                    'per_page' => $perPage,
+                ]);
 
-                $response = $this->client->fetchSocios($params);
+                try {
+                    $response = $this->client->fetchSocios($params);
+                } catch (\Exception $e) {
+                    logger()->error('[SYNC] Fetch failed', [
+                        'page' => $page,
+                        'error' => $e->getMessage(),
+                    ]);
+                    throw $e;
+                }
 
-                // (2) Logs seguros post-fetch (sin concatenar arrays)
+                // (2) Logs seguros post-fetch
                 $data = is_array($response) ? ($response['data'] ?? null) : null;
-                $first = (is_array($data) && isset($data[0]) && is_array($data[0])) ? $data[0] : null;
+                $pagination = $response['pagination'] ?? [];
+                $serverTime = $response['server_time'] ?? null;
+                
+                $dataCount = is_array($data) ? count($data) : 0;
+                $this->line("[SYNC] data_count={$dataCount} current_page=" . ($pagination['current_page'] ?? '?') . " last_page=" . ($pagination['last_page'] ?? '?'));
+                
                 logger()->info('PadronSync: fetchSocios response summary', [
-                    'response_type' => gettype($response),
-                    'response_keys' => is_array($response) ? array_slice(array_keys($response), 0, 20) : null,
-                    'data_type' => gettype($data),
-                    'data_count' => is_array($data) ? count($data) : null,
-                    'first_item_keys' => is_array($first) ? array_slice(array_keys($first), 0, 40) : null,
+                    'page' => $page,
+                    'data_count' => $dataCount,
+                    'pagination' => $pagination,
+                    'server_time' => $serverTime,
                 ]);
 
                 // Si no hay data, evitar fallos raros
-                if (!is_array($data)) {
-                    logger()->warning('PadronSync: response[data] no es array', [
-                        'data' => $data,
+                if (!is_array($data) || empty($data)) {
+                    $this->line("[SYNC] data is empty or not array on page {$page}");
+                    logger()->warning('PadronSync: data empty or invalid', [
+                        'page' => $page,
+                        'data_type' => gettype($data),
+                        'data_count' => $dataCount,
                     ]);
                     break;
                 }
@@ -102,10 +125,16 @@ class PadronSyncCommand extends Command
                     $rows[] = $this->mapItemToRow($item);
                 }
 
+                // Incrementar totalProcessed
+                $totalProcessed += count($rows);
+                
                 $this->upsertSocios($rows);
+                
+                // Incrementar totalUpserted (asumimos que se upsertean todos los rows procesados)
+                $totalUpserted += count($rows);
 
-                $currentPage = (int) ($response['pagination']['current_page'] ?? $page);
-                $lastPage = (int) ($response['pagination']['last_page'] ?? $page);
+                $currentPage = (int) ($pagination['current_page'] ?? $page);
+                $lastPage = (int) ($pagination['last_page'] ?? $page);
 
                 $page++;
             } while ($currentPage < $lastPage);
@@ -122,6 +151,12 @@ class PadronSyncCommand extends Command
             $this->info("  • Total procesados: {$totalProcessed}");
             $this->info("  • Total upsertados: {$totalUpserted}");
             $this->info("  • Último sync: {$syncTime}");
+
+            logger()->info('[SYNC] Sync completed', [
+                'total_processed' => $totalProcessed,
+                'total_upserted' => $totalUpserted,
+                'last_sync_at' => $syncTime,
+            ]);
 
             return 0;
         } catch (\Throwable $e) {
