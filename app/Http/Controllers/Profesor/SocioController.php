@@ -171,84 +171,27 @@ class SocioController extends Controller
 
         abort_unless((bool) $profesor->is_professor, 403, 'No autorizado: solo profesores');
 
-        // Intentar resolver como SocioPadron primero, luego como User
-        $socio = SocioPadron::find($socioId);
-        
-        if (!$socio) {
-            // Fallback: buscar en usuarios (legacy)
-            $userSocio = User::find($socioId);
-            if (!$userSocio || $userSocio->user_type !== 'API') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Socio no encontrado',
-                ], 404);
-            }
-            
-            // Validar que no esté ya asignado a este profesor
-            $already = $profesor->sociosAsignados()->where('users.id', $userSocio->id)->exists();
-            if ($already) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'El socio ya está asignado',
-                ], 409);
-            }
-            
-            $profesor->sociosAsignados()->attach($userSocio->id, ['assigned_by' => $profesor->id]);
-            
-            return response()->json(['success' => true, 'data' => $userSocio], 201);
-        }
+        // Buscar socio en padrón (fallará con 404 si no existe)
+        $socio = SocioPadron::findOrFail($socioId);
 
-        // Es un SocioPadron
-        $already = DB::table('professor_socio')
-            ->where('professor_id', $profesor->id)
-            ->where('socio_id', $socio->id)
-            ->exists();
-        
-        if ($already) {
-            return response()->json([
-                'success' => false,
-                'message' => 'El socio ya está asignado',
-            ], 409);
-        }
+        // Insertar evitando duplicados (updateOrInsert garantiza idempotencia)
+        DB::table('professor_socio')->updateOrInsert(
+            ['professor_id' => $profesor->id, 'socio_id' => $socio->id],
+            ['assigned_by' => $profesor->id, 'updated_at' => now(), 'created_at' => now()]
+        );
 
-        DB::table('professor_socio')->insert([
+        $responseData = [
             'professor_id' => $profesor->id,
-            'socio_id' => $socio->id,
-            'assigned_by' => $profesor->id,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-
-        // Devolver el socio formateado igual que en disponibles
-        $apellido = '';
-        $nombre = '';
-        if (!empty($socio->apynom)) {
-            if (strpos($socio->apynom, ',') !== false) {
-                [$apellido, $nombre] = array_map('trim', explode(',', $socio->apynom, 2));
-            } else {
-                $parts = array_map('trim', explode(' ', $socio->apynom));
-                $apellido = $parts[0] ?? '';
-                $nombre = implode(' ', array_slice($parts, 1));
-            }
-        }
-
-        $data = [
-            'id' => $socio->id,
+            'socio_padron_id' => $socio->id,
             'dni' => $socio->dni,
-            'socio_id' => $socio->sid,
-            'socio_n' => $socio->sid,
-            'apellido' => $apellido,
-            'nombre' => $nombre,
-            'barcode' => $socio->barcode,
-            'saldo' => $socio->saldo,
-            'semaforo' => $socio->semaforo,
-            'estado_socio' => null,
-            'avatar_path' => null,
-            'foto_url' => null,
-            'type_label' => 'Socio',
+            'sid' => $socio->sid,
         ];
 
-        return response()->json(['success' => true, 'data' => $data], 201);
+        return response()->json([
+            'success' => true,
+            'message' => 'Socio asignado',
+            'data' => $responseData,
+        ], 201);
     }
 
     /**
@@ -267,40 +210,27 @@ class SocioController extends Controller
 
         abort_unless((bool) $profesor->is_professor, 403, 'No autorizado: solo profesores');
 
-        // Intentar resolver como SocioPadron primero
-        $socioPadron = SocioPadron::find($socioId);
-        
-        if ($socioPadron) {
-            // Es un SocioPadron
-            $assigned = DB::table('professor_socio')
-                ->where('professor_id', $profesor->id)
-                ->where('socio_id', $socioPadron->id)
-                ->exists();
-            
-            abort_unless($assigned, 404, 'El socio no está asignado');
-            
-            DB::table('professor_socio')
-                ->where('professor_id', $profesor->id)
-                ->where('socio_id', $socioPadron->id)
-                ->delete();
-            
-            return response()->json(['success' => true]);
+        $socio = SocioPadron::findOrFail($socioId);
+
+        // Eliminar la asignación si existe
+        $deleted = DB::table('professor_socio')
+            ->where('professor_id', $profesor->id)
+            ->where('socio_id', $socio->id)
+            ->delete();
+
+        if ($deleted === 0) {
+            return response()->json(['success' => false, 'message' => 'El socio no está asignado'], 404);
         }
 
-        // Fallback: buscar como User (legacy)
-        $userSocio = User::find($socioId);
-        if (!$userSocio || $userSocio->user_type !== 'API') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Socio no encontrado',
-            ], 404);
-        }
-
-        $assigned = $profesor->sociosAsignados()->where('users.id', $userSocio->id)->exists();
-        abort_unless($assigned, 404, 'El socio no está asignado');
-
-        $profesor->sociosAsignados()->detach($userSocio->id);
-
-        return response()->json(['success' => true]);
+        return response()->json([
+            'success' => true,
+            'message' => 'Socio desasignado',
+            'data' => [
+                'professor_id' => $profesor->id,
+                'socio_padron_id' => $socio->id,
+                'dni' => $socio->dni,
+                'sid' => $socio->sid,
+            ],
+        ]);
     }
 }
