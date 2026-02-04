@@ -43,7 +43,7 @@ class PadronSyncCommand extends Command
             // Punto 3: Normalizar formato de $since para vmServer (Y-m-d\TH:i:s, sin Z)
             if (!empty($since)) {
                 $sinceRaw = $since;
-                $since = Carbon::parse($since)->utc()->format('Y-m-d\TH:i:s');
+                    $since = Carbon::parse($since)->utc()->format('Y-m-d\TH:i:s') . 'Z';
                 $this->line("[LOG] $since NORMALIZADO: {$since}");
                 $this->line("       Raw: {$sinceRaw}");
             }
@@ -100,7 +100,7 @@ class PadronSyncCommand extends Command
 
             // Actualizar last_sync - normalizar formato para vmServer (Y-m-d\TH:i:s, sin Z)
             $syncTime = $lastServerTime ?? now()->toIso8601String();
-            $syncTime = Carbon::parse($syncTime)->utc()->format('Y-m-d\TH:i:s');
+                $syncTime = Carbon::parse($syncTime)->utc()->format('Y-m-d\TH:i:s') . 'Z';
             SyncState::setValue('padron_last_sync_at', $syncTime);
 
             $this->newLine();
