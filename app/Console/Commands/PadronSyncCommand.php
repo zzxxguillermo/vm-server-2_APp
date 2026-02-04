@@ -71,6 +71,25 @@ class PadronSyncCommand extends Command
 
                 $response = $this->client->fetchSocios($params);
 
+                // Instrumentation: log safe diagnostics about the response
+                try {
+                    $respType = gettype($response);
+                    $dataCount = 'n/a';
+                    $firstItemKeys = [];
+                    if (is_array($response) && array_key_exists('data', $response) && is_array($response['data'])) {
+                        $dataCount = count($response['data']);
+                        if ($dataCount > 0 && is_array($response['data'][0])) {
+                            $firstItemKeys = array_keys($response['data'][0]);
+                        }
+                    }
+                    $this->line('[LOG] fetchSocios response type: ' . $respType);
+                    $this->line('[LOG] fetchSocios data count: ' . $dataCount);
+                    $this->line('[LOG] fetchSocios first item keys: ' . json_encode($firstItemKeys, JSON_UNESCAPED_UNICODE));
+                } catch (\Throwable $t) {
+                    // Non-fatal logging failure
+                    logger()->warning('PadronSync: failed to log response diagnostics', ['err' => $t->getMessage()]);
+                }
+
                 $items = $response['data'] ?? [];
                 $currentPage = $response['pagination']['current_page'] ?? $page;
                 $lastPage = $response['pagination']['last_page'] ?? 1;
@@ -111,6 +130,24 @@ class PadronSyncCommand extends Command
 
             return 0;
         } catch (\Exception $e) {
+            // Log file, line and first 10 trace frames in a safe structured way
+            $trace = $e->getTrace();
+            $frames = [];
+            for ($i = 0; $i < min(10, count($trace)); $i++) {
+                $f = $trace[$i];
+                $frames[] = [
+                    'file' => $f['file'] ?? null,
+                    'line' => $f['line'] ?? null,
+                    'function' => $f['function'] ?? null,
+                    'class' => $f['class'] ?? null,
+                ];
+            }
+            logger()->error('PadronSync: exception', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'frames' => $frames,
+            ]);
             $this->error("❌ Error en la sincronización: " . $e->getMessage());
             return 1;
         }
@@ -163,6 +200,31 @@ class PadronSyncCommand extends Command
 
         // Upsert por SID
         if (!empty($rowsWithSid)) {
+            // Detector y conversor: revisar tipos antes de persistir
+            foreach ($rowsWithSid as $idx => $row) {
+                foreach ($row as $k => $v) {
+                    if (is_array($v) || is_object($v)) {
+                        $preview = null;
+                        try {
+                            $preview = substr(json_encode($v, JSON_UNESCAPED_UNICODE), 0, 500);
+                        } catch (\Throwable $_) {
+                            $preview = 'json_encode_failed';
+                        }
+                        logger()->error('PadronSync: non-scalar value detected before upsert', [
+                            'side' => 'withSid',
+                            'index' => $idx,
+                            'key' => $k,
+                            'type' => is_object($v) ? 'object' : 'array',
+                            'dni' => $row['dni'] ?? null,
+                            'sid' => $row['sid'] ?? null,
+                            'preview' => $preview,
+                        ]);
+                        // Convertir a JSON string para evitar Array to string conversion
+                        $rowsWithSid[$idx][$k] = json_encode($v, JSON_UNESCAPED_UNICODE);
+                        logger()->info('PadronSync: converted non-scalar to JSON string', ['key' => $k, 'index' => $idx]);
+                    }
+                }
+            }
             SocioPadron::upsert(
                 $rowsWithSid,
                 ['sid'],
@@ -173,6 +235,31 @@ class PadronSyncCommand extends Command
 
         // Upsert por DNI
         if (!empty($rowsWithoutSid)) {
+            // Detector y conversor: revisar tipos antes de persistir
+            foreach ($rowsWithoutSid as $idx => $row) {
+                foreach ($row as $k => $v) {
+                    if (is_array($v) || is_object($v)) {
+                        $preview = null;
+                        try {
+                            $preview = substr(json_encode($v, JSON_UNESCAPED_UNICODE), 0, 500);
+                        } catch (\Throwable $_) {
+                            $preview = 'json_encode_failed';
+                        }
+                        logger()->error('PadronSync: non-scalar value detected before upsert', [
+                            'side' => 'withoutSid',
+                            'index' => $idx,
+                            'key' => $k,
+                            'type' => is_object($v) ? 'object' : 'array',
+                            'dni' => $row['dni'] ?? null,
+                            'sid' => $row['sid'] ?? null,
+                            'preview' => $preview,
+                        ]);
+                        // Convertir a JSON string para evitar Array to string conversion
+                        $rowsWithoutSid[$idx][$k] = json_encode($v, JSON_UNESCAPED_UNICODE);
+                        logger()->info('PadronSync: converted non-scalar to JSON string', ['key' => $k, 'index' => $idx]);
+                    }
+                }
+            }
             SocioPadron::upsert(
                 $rowsWithoutSid,
                 ['dni'],
