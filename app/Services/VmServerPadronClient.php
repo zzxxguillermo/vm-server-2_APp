@@ -31,6 +31,8 @@ class VmServerPadronClient
     public function fetchSocios(array $params): array
     {
         try {
+            \Log::info('[VmServerPadronClient] fetchSocios - Params finales antes de enviar:', $params);
+            
             $response = Http::baseUrl($this->baseUrl)
                 ->timeout($this->timeout)
                 ->withHeaders([
@@ -39,7 +41,10 @@ class VmServerPadronClient
                 ])
                 ->get('/api/internal/padron/socios', $params);
 
+            \Log::info('[VmServerPadronClient] fetchSocios - Status: ' . $response->status());
+            
             if ($response->failed()) {
+                \Log::error('[VmServerPadronClient] fetchSocios - Error response body:', ['body' => $response->body()]);
                 throw new RuntimeException(
                     "VmServer API error ({$response->status()}): " . $response->body()
                 );

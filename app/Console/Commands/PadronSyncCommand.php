@@ -35,12 +35,17 @@ class PadronSyncCommand extends Command
     public function handle()
     {
         try {
+            // Punto 1: Obtener $since sin normalizar
             $since = $this->determineSince();
             $perPage = (int) $this->option('per-page');
+            $this->line("[LOG] $since RAW (sin normalizar): {$since}");
 
-            // Normalizar formato de $since para vmServer (Y-m-d\TH:i:s, sin Z)
+            // Punto 3: Normalizar formato de $since para vmServer (Y-m-d\TH:i:s, sin Z)
             if (!empty($since)) {
+                $sinceRaw = $since;
                 $since = Carbon::parse($since)->utc()->format('Y-m-d\TH:i:s');
+                $this->line("[LOG] $since NORMALIZADO: {$since}");
+                $this->line("       Raw: {$sinceRaw}");
             }
 
             $this->info("🔄 Iniciando sincronización de socios desde vmServer");
@@ -56,11 +61,15 @@ class PadronSyncCommand extends Command
             while (true) {
                 $this->line("📄 Obteniendo página {$page}...");
 
-                $response = $this->client->fetchSocios([
+                // Punto 4: Armar params para vmServer
+                $params = [
                     'updated_since' => $since,
                     'page' => $page,
                     'per_page' => $perPage,
-                ]);
+                ];
+                $this->line("[LOG] Params enviados a client.fetchSocios(): " . json_encode($params));
+
+                $response = $this->client->fetchSocios($params);
 
                 $items = $response['data'] ?? [];
                 $currentPage = $response['pagination']['current_page'] ?? $page;
@@ -112,17 +121,24 @@ class PadronSyncCommand extends Command
      */
     protected function determineSince(): string
     {
+        // Punto 1: Leer --since desde CLI
         if ($this->option('since')) {
-            return $this->option('since');
+            $cliSince = $this->option('since');
+            $this->line("[LOG] --since de CLI: {$cliSince}");
+            return $cliSince;
         }
 
+        // Punto 2: Leer desde SyncState
         $lastSync = SyncState::getValue('padron_last_sync_at');
         if ($lastSync) {
+            $this->line("[LOG] last sync de SyncState: {$lastSync}");
             return $lastSync;
         }
 
         // Default: últimas 24 horas
-        return now()->subDay()->toIso8601String();
+        $default = now()->subDay()->toIso8601String();
+        $this->line("[LOG] usando default (24h atrás): {$default}");
+        return $default;
     }
 
     /**
