@@ -199,8 +199,8 @@ class PadronSyncCommand extends Command
             'ult_impago' => isset($item['ult_impago']) ? (int) $item['ult_impago'] : null,
             'acceso_full' => (bool) ($item['acceso_full'] ?? false),
             'hab_controles' => (bool) ($item['hab_controles'] ?? true),
-            'hab_controles_raw' => isset($item['hab_controles_raw']) ? (array) $item['hab_controles_raw'] : null,
-            'raw' => $item, // Guardar el objeto completo como raw
+            'hab_controles_raw' => isset($item['hab_controles_raw']) ? json_encode((array) $item['hab_controles_raw'], JSON_UNESCAPED_UNICODE) : null,
+            'raw' => isset($item) ? json_encode($item, JSON_UNESCAPED_UNICODE) : null, // Guardar el objeto completo como JSON string
         ];
     }
 
