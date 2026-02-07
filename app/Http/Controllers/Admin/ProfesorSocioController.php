@@ -107,11 +107,70 @@ class ProfesorSocioController extends Controller
             $pairs[$sid] = ['assigned_by' => $adminId];
         }
 
-        $profesor->sociosAsignados()->sync($pairs);
+        $result = DB::transaction(function () use ($profesor, $pairs, $validSocios, $adminId) {
+            // Sync pivot
+            $profesor->sociosAsignados()->sync($pairs);
+
+            $today = Carbon::today();
+            $professorId = $profesor->id;
+
+            // Activar o crear assignments
+            $assignmentsSynced = [];
+            foreach ($validSocios as $studentId) {
+                $assignment = ProfessorStudentAssignment::where('professor_id', $professorId)
+                    ->where('student_id', $studentId)
+                    ->first();
+                if ($assignment) {
+                    if ($assignment->status !== 'active') {
+                        $assignment->status = 'active';
+                        $assignment->start_date = $today;
+                        $assignment->end_date = null;
+                        $assignment->admin_notes = null;
+                        $assignment->assigned_by = $adminId;
+                        $assignment->save();
+                        $assignmentsSynced[] = ['id' => $assignment->id, 'student_id' => $studentId, 'action' => 'reactivated'];
+                    } else {
+                        $assignmentsSynced[] = ['id' => $assignment->id, 'student_id' => $studentId, 'action' => 'unchanged'];
+                    }
+                } else {
+                    $new = ProfessorStudentAssignment::create([
+                        'professor_id' => $professorId,
+                        'student_id' => $studentId,
+                        'assigned_by' => $adminId,
+                        'start_date' => $today,
+                        'end_date' => null,
+                        'status' => 'active',
+                        'admin_notes' => null,
+                    ]);
+                    $assignmentsSynced[] = ['id' => $new->id, 'student_id' => $studentId, 'action' => 'created'];
+                }
+            }
+
+            // Cancelar assignments de students removidos
+            $currentStudentIds = ProfessorStudentAssignment::where('professor_id', $professorId)
+                ->where('status', 'active')
+                ->pluck('student_id')->toArray();
+            $removed = array_diff($currentStudentIds, $validSocios);
+            foreach ($removed as $studentId) {
+                $assignment = ProfessorStudentAssignment::where('professor_id', $professorId)
+                    ->where('student_id', $studentId)
+                    ->where('status', 'active')
+                    ->first();
+                if ($assignment) {
+                    $assignment->status = 'cancelled';
+                    $assignment->end_date = $today;
+                    $assignment->save();
+                    $assignmentsSynced[] = ['id' => $assignment->id, 'student_id' => $studentId, 'action' => 'cancelled'];
+                }
+            }
+
+            return $assignmentsSynced;
+        });
 
         return response()->json([
             'ok' => true,
             'assigned_count' => count($validSocios),
+            'assignments_sync' => $result,
         ]);
     }
 }
