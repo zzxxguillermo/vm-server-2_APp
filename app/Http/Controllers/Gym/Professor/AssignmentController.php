@@ -1,3 +1,40 @@
+    /**
+     * Listar assignments de un alumno asignado al profesor autenticado
+     */
+    public function studentTemplateAssignments($studentId, Request $request): \Illuminate\Http\JsonResponse
+    {
+        // Validar que sea integer y exista en users
+        $validator = \Validator::make(['student_id' => $studentId], [
+            'student_id' => 'required|integer|exists:users,id',
+        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'studentId inválido',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        // Verificar asignación activa
+        $assignment = \App\Models\Gym\ProfessorStudentAssignment::where('professor_id', auth()->id())
+            ->where('student_id', $studentId)
+            ->where('status', 'active')
+            ->first();
+        if (!$assignment) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Estudiante no asignado o inactivo'
+            ], 403);
+        }
+
+        $filters = method_exists($this, 'buildFilters') ? $this->buildFilters($request) : [];
+        $assignments = $this->assignmentService->getStudentTemplateAssignments($studentId, $filters);
+
+        return response()->json([
+            'ok' => true,
+            'data' => $assignments
+        ]);
+    }
 <?php
 
 namespace App\Http\Controllers\Gym\Professor;

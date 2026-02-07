@@ -120,6 +120,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // ---- existente (plan/assignments)
         Route::get('my-students', [ProfessorAssignmentController::class, 'myStudents']);
+        Route::get('students/{studentId}/template-assignments', [ProfessorAssignmentController::class, 'studentTemplateAssignments']);
         Route::get('my-stats', [ProfessorAssignmentController::class, 'myStats']);
 
         Route::post('assign-template', [ProfessorAssignmentController::class, 'assignTemplate']);

@@ -57,8 +57,10 @@ class TemplateAssignment extends Model
 
     public function scopeForStudent($query, $studentId)
     {
+        // Filtra por student_id y por el profesor autenticado
         return $query->whereHas('professorStudentAssignment', function($q) use ($studentId) {
-            $q->where('student_id', $studentId);
+            $q->where('student_id', $studentId)
+              ->where('professor_id', auth()->id());
         });
     }
 
