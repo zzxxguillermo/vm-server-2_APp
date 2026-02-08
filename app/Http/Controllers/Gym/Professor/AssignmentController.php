@@ -8,6 +8,48 @@ use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
 
 class AssignmentController extends Controller
+
+    /**
+     * Listar las asignaciones de plantillas de un alumno asignado a este profesor
+     */
+    public function studentTemplateAssignments(Request $request, int $studentId)
+    {
+        // Validar que studentId sea entero y exista
+        if (!is_numeric($studentId) || intval($studentId) != $studentId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'El ID del alumno debe ser un entero válido.'
+            ], 422);
+        }
+
+        $student = \App\Models\User::find($studentId);
+        if (!$student) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Alumno no encontrado.'
+            ], 404);
+        }
+
+        // Verificar asignación activa
+        $asignacion = \App\Models\Gym\ProfessorStudentAssignment::where('professor_id', auth()->id())
+            ->where('student_id', $studentId)
+            ->where('status', 'active')
+            ->first();
+        if (!$asignacion) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Alumno no asignado a este profesor.'
+            ], 403);
+        }
+
+        $filters = method_exists($this, 'buildFilters') ? $this->buildFilters($request) : [];
+        $assignments = $this->assignmentService->getStudentTemplateAssignments($studentId, $filters);
+
+        return response()->json([
+            'success' => true,
+            'data' => $assignments
+        ]);
+    }
 {
     public function __construct(
         private AssignmentService $assignmentService
