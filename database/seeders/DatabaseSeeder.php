@@ -81,6 +81,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             GymExerciseSeeder::class,
             GymDailyTemplatesSeeder::class,
+            ProfessorStudentAssignmentsSeeder::class,
         ]);
     }
 }
