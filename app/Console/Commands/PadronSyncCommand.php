@@ -10,18 +10,7 @@ use Illuminate\Support\Carbon;
 
 class PadronSyncCommand extends Command
 {
-    /**
-     * The name and signature of the console command.
-     *
-     * @var string
-     */
     protected $signature = 'padron:sync {--since=} {--per-page=500} {--all}';
-
-    /**
-     * The console command description.
-     *
-     * @var string
-     */
     protected $description = 'Sincronizar socios desde vmServer hacia tabla socios_padron';
 
     protected VmServerPadronClient $client;
@@ -37,22 +26,20 @@ class PadronSyncCommand extends Command
         try {
             $perPage = (int) $this->option('per-page');
 
-            // ✅ NUEVO: --all para traer TODO (sin updated_since)
+            // ✅ --all para traer TODO (sin updated_since)
             $forceAll = (bool) $this->option('all');
             if ($forceAll) {
                 $since = null;
                 $this->line("[SYNC] --all usado: NO se enviará updated_since (traer todo)");
             } else {
-                // Punto 1: Obtener $since sin normalizar
                 $since = $this->determineSince();
                 $this->line("[SYNC] since RAW: {$since}");
 
-                // Punto 3: Normalizar formato de $since para vmServer (Y-m-d\TH:i:sZ, Z literal)
                 if (!empty($since)) {
                     $since = Carbon::parse($since)->utc()->format('Y-m-d\TH:i:s') . 'Z';
                     $this->line("[SYNC] since NORMALIZADO: {$since}");
                 } else {
-                    $since = null; // No enviar updated_since si está vacío
+                    $since = null;
                     $this->line("[SYNC] since is empty: updated_since will NOT be sent");
                 }
             }
@@ -66,13 +53,15 @@ class PadronSyncCommand extends Command
             $totalUpserted = 0;
             $totalProcessed = 0;
 
-            $currentPage = 0;
-            $lastPage = 0;
+            // ✅ NUEVO: control de loop robusto
+            $shouldContinue = true;
 
-            do {
+            // para guardar el último server_time al final
+            $lastServerTime = null;
+
+            while ($shouldContinue) {
                 $this->info("📄 Obteniendo página {$page}...");
 
-                // Params para vmServer
                 $params = [
                     'page' => $page,
                     'per_page' => $perPage,
@@ -93,15 +82,19 @@ class PadronSyncCommand extends Command
                 $data = is_array($response) ? ($response['data'] ?? null) : null;
                 $pagination = is_array($response) ? ($response['pagination'] ?? []) : [];
                 $serverTime = is_array($response) ? ($response['server_time'] ?? null) : null;
+                $lastServerTime = $serverTime ?? $lastServerTime;
 
                 $dataCount = is_array($data) ? count($data) : 0;
 
-                $this->line("[SYNC] data_count={$dataCount} current_page=" . ($pagination['current_page'] ?? '?') . " last_page=" . ($pagination['last_page'] ?? '?'));
+                $this->line(
+                    "[SYNC] data_count={$dataCount} current_page=" . ($pagination['current_page'] ?? '?') .
+                    " last_page=" . ($pagination['last_page'] ?? '?')
+                );
 
-                // ✅ NUEVO: warn si el server fuerza otro per_page (por ej 50)
-                $serverPerPage = $pagination['per_page'] ?? null;
-                if ($serverPerPage !== null && (int) $serverPerPage !== (int) $perPage) {
-                    $this->warn("[SYNC] ⚠️ vmServer está usando per_page={$serverPerPage} (vos pediste {$perPage})");
+                // Warn si el server fuerza otro per_page (ej 50)
+                $serverPerPage = (int) ($pagination['per_page'] ?? $perPage);
+                if (!empty($pagination) && isset($pagination['per_page']) && (int)$pagination['per_page'] !== (int)$perPage) {
+                    $this->warn("[SYNC] ⚠️ vmServer está usando per_page={$pagination['per_page']} (vos pediste {$perPage})");
                 }
 
                 logger()->info('PadronSync: fetchSocios response summary', [
@@ -113,7 +106,7 @@ class PadronSyncCommand extends Command
 
                 // Si no hay data, cortar
                 if (!is_array($data) || empty($data)) {
-                    $this->line("[SYNC] data is empty or not array on page {$page}");
+                    $this->line("[SYNC] data is empty or not array on page {$page} -> STOP");
                     logger()->warning('PadronSync: data empty or invalid', [
                         'page' => $page,
                         'data_type' => gettype($data),
@@ -122,31 +115,42 @@ class PadronSyncCommand extends Command
                     break;
                 }
 
+                // Map
                 $rows = [];
                 foreach ($data as $item) {
-                    if (!is_array($item)) {
-                        continue;
-                    }
+                    if (!is_array($item)) continue;
                     $rows[] = $this->mapItemToRow($item);
                 }
 
                 $totalProcessed += count($rows);
-
                 $this->upsertSocios($rows);
-
                 $totalUpserted += count($rows);
 
-                $currentPage = (int) ($pagination['current_page'] ?? $page);
-                $lastPage = (int) ($pagination['last_page'] ?? $page);
+                /**
+                 * ✅ DECISIÓN DE PAGINADO:
+                 * - Si viene last_page, usamos eso.
+                 * - Si NO viene, fallback: si dataCount == per_page, asumimos que hay más páginas.
+                 */
+                $hasLastPage = is_array($pagination) && array_key_exists('last_page', $pagination) && $pagination['last_page'] !== null;
+
+                if ($hasLastPage) {
+                    $currentPage = (int) ($pagination['current_page'] ?? $page);
+                    $lastPage = (int) ($pagination['last_page'] ?? $page);
+                    $shouldContinue = $currentPage < $lastPage;
+
+                    $this->line("[SYNC] pagination_mode=last_page current={$currentPage} last={$lastPage} continue=" . ($shouldContinue ? 'yes' : 'no'));
+                } else {
+                    // fallback por conteo
+                    $shouldContinue = ($dataCount === $serverPerPage);
+                    $this->line("[SYNC] pagination_mode=count_fallback per_page_used={$serverPerPage} continue=" . ($shouldContinue ? 'yes' : 'no'));
+                }
 
                 $page++;
-            } while ($currentPage < $lastPage);
+            }
 
-            // Guardar last sync (mismo formato que vmServer espera)
-            $lastServerTime = $response['server_time'] ?? null;
+            // Guardar last sync
             $syncTime = $lastServerTime ?? now('UTC')->format('Y-m-d\TH:i:s') . 'Z';
             $syncTime = Carbon::parse($syncTime)->utc()->format('Y-m-d\TH:i:s') . 'Z';
-
             SyncState::setValue('padron_last_sync_at', $syncTime);
 
             $this->newLine();
@@ -175,9 +179,6 @@ class PadronSyncCommand extends Command
         }
     }
 
-    /**
-     * Determinar la fecha desde la cual sincronizar
-     */
     protected function determineSince(): string
     {
         if ($this->option('since')) {
@@ -197,25 +198,19 @@ class PadronSyncCommand extends Command
         return $default;
     }
 
-    /**
-     * Realizar upsert de socios, separando por sid y dni
-     */
     protected function upsertSocios(array $rows): void
     {
-        if (empty($rows)) {
-            return;
-        }
+        if (empty($rows)) return;
 
         // Detector antes de persistir: encuentra el primer valor no escalar
         foreach ($rows as $i => $row) {
-            if (!is_array($row)) {
-                continue;
-            }
+            if (!is_array($row)) continue;
             foreach ($row as $k => $v) {
                 if (is_array($v) || is_object($v)) {
                     $preview = is_object($v)
                         ? ('object:' . get_class($v))
                         : substr(json_encode($v, JSON_UNESCAPED_UNICODE), 0, 500);
+
                     logger()->error('PadronSync: non-scalar value detected before upsert', [
                         'row_index' => $i,
                         'dni' => $row['dni'] ?? null,
@@ -224,6 +219,7 @@ class PadronSyncCommand extends Command
                         'type' => gettype($v),
                         'preview' => $preview,
                     ]);
+
                     throw new \RuntimeException("Non-scalar: {$k} row {$i} dni=" . ($row['dni'] ?? 'null') . " sid=" . ($row['sid'] ?? 'null'));
                 }
             }
@@ -243,9 +239,6 @@ class PadronSyncCommand extends Command
         }
     }
 
-    /**
-     * Mapear item de la API a fila de la tabla
-     */
     protected function mapItemToRow(array $item): array
     {
         $raw = $item['raw'] ?? $item;
@@ -280,24 +273,19 @@ class PadronSyncCommand extends Command
         ];
     }
 
-    /**
-     * Normalizar hab_controles: null o [] => 0, string/int => int, otro => 0
-     */
     protected function normalizeHabControles($value, ?string $dni, ?string $sid): int
     {
         if ($value === null || (is_array($value) && empty($value))) {
-            if ($value === null || empty($value)) {
-                logger()->warning('PadronSync: hab_controles normalized to 0 (null or empty array)', [
-                    'original_type' => gettype($value),
-                    'dni' => $dni,
-                    'sid' => $sid,
-                ]);
-            }
+            logger()->warning('PadronSync: hab_controles normalized to 0 (null or empty array)', [
+                'original_type' => gettype($value),
+                'dni' => $dni,
+                'sid' => $sid,
+            ]);
             return 0;
         }
 
         if (is_array($value) || is_object($value)) {
-            logger()->warning('PadronSync: hab_controles normalized to 0 (non-empty array/object)', [
+            logger()->warning('PadronSync: hab_controles normalized to 0 (array/object)', [
                 'original_type' => gettype($value),
                 'dni' => $dni,
                 'sid' => $sid,
