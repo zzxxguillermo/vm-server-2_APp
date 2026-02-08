@@ -18,27 +18,57 @@ class ProfessorStudentAssignmentsSeeder extends Seeder
      */
     public function run()
     {
-        // Buscar profesores y estudiantes
-        $professors = User::where('is_professor', true)->get();
-        $students = User::where('student_gym', true)->get();
+        // Buscar un admin válido para assigned_by
+        $adminId = User::where('is_admin', 1)->value('id') ?? 1;
 
-        $now = Carbon::now();
+        // Profesores: users donde is_professor=1
+        $professors = User::where('is_professor', 1)->get();
+        // Estudiantes: users donde is_admin=0 AND is_professor=0
+        $students = User::where('is_admin', 0)->where('is_professor', 0)->get();
+
+        $today = Carbon::today()->toDateString();
         $count = 0;
 
         foreach ($professors as $professor) {
-            // Asignar 3 estudiantes aleatorios a cada profesor
-            $assigned = $students->random(min(3, $students->count()));
+            // Asignar 3 estudiantes aleatorios a cada profesor, evitando self-assign
+            $eligibleStudents = $students->where('id', '!=', $professor->id);
+            if ($eligibleStudents->count() === 0) {
+                continue;
+            }
+            $assigned = $eligibleStudents->random(min(3, $eligibleStudents->count()));
             foreach ($assigned as $student) {
-                ProfessorStudentAssignment::updateOrCreate([
-                    'professor_id' => $professor->id,
-                    'student_id' => $student->id,
-                ], [
-                    'status' => 'active',
-                    'assigned_at' => $now,
-                ]);
-                $count++;
+                // Buscar si ya existe la asignación
+                $existing = ProfessorStudentAssignment::where('professor_id', $professor->id)
+                    ->where('student_id', $student->id)
+                    ->first();
+                if ($existing) {
+                    if ($existing->status !== 'active') {
+                        // Reactivar y actualizar fechas
+                        $existing->update([
+                            'status' => 'active',
+                            'start_date' => $today,
+                            'end_date' => null,
+                            'assigned_by' => $adminId,
+                            'admin_notes' => null,
+                        ]);
+                        $count++;
+                    }
+                    // Si ya está active, no hacer nada
+                } else {
+                    // Crear nueva asignación
+                    ProfessorStudentAssignment::create([
+                        'professor_id' => $professor->id,
+                        'student_id' => $student->id,
+                        'assigned_by' => $adminId,
+                        'start_date' => $today,
+                        'end_date' => null,
+                        'status' => 'active',
+                        'admin_notes' => null,
+                    ]);
+                    $count++;
+                }
             }
         }
-        Log::info("Seeder: {$count} asignaciones profesor-estudiante creadas.");
+        Log::info("Seeder: {$count} asignaciones profesor-estudiante creadas o reactivadas.");
     }
 }
