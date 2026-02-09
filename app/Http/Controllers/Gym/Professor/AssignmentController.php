@@ -226,6 +226,86 @@ class AssignmentController extends Controller
     }
 }
 
+public function studentTemplateAssignments(Request $request, int $studentId): JsonResponse
+{
+    try {
+        $professorId = (int) auth()->id();
+
+        $user = User::find($studentId);
+
+        if (!$user) {
+            $socio = SocioPadron::find($studentId);
+            if (!$socio) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Alumno no encontrado (ni user ni socio padron)'
+                ], 404);
+            }
+
+            $isAssigned = DB::table('professor_socio')
+                ->where('professor_id', $professorId)
+                ->where('socio_id', (int) $socio->id)
+                ->exists();
+
+            if (!$isAssigned) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Alumno no asignado a este profesor'
+                ], 403);
+            }
+
+            $user = $this->ensureUserFromSocioPadron($socio);
+        }
+
+        $psa = ProfessorStudentAssignment::query()->firstOrCreate(
+            [
+                'professor_id' => $professorId,
+                'student_id' => (int) $user->id,
+            ],
+            [
+                'assigned_by' => $professorId,
+                'status' => 'active',
+                'start_date' => now(),
+                'end_date' => null,
+                'admin_notes' => null,
+            ]
+        );
+
+        if ($psa->status !== 'active') {
+            $psa->status = 'active';
+            $psa->end_date = null;
+            $psa->save();
+        }
+
+        $rows = DB::table('daily_assignments as da')
+            ->leftJoin('daily_templates as dt', 'dt.id', '=', 'da.daily_template_id')
+            ->where('da.professor_student_assignment_id', (int) $psa->id)
+            ->orderByDesc('da.start_date')
+            ->select([
+                'da.*',
+                DB::raw('dt.title as daily_template_title'),
+            ])
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $rows,
+            'meta' => [
+                'professor_student_assignment_id' => (int) $psa->id,
+                'student_user_id' => (int) $user->id,
+            ],
+        ]);
+
+    } catch (\Throwable $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error al obtener plantillas del alumno',
+            'error' => $e->getMessage(),
+        ], 500);
+    }
+}
+
+
     /**
      * ✅ Resuelve un ID entrante (PSA real o socio_padron.id) al PSA real.
      */
