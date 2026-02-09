@@ -23,6 +23,7 @@ class AssignmentController extends Controller
 
     /**
      * Obtener mis estudiantes asignados (desde professor_socio + socios_padron)
+     * PHASE 1: Add metadata with user_id and psa_id to clarify ID usage.
      */
     public function myStudents(Request $request): JsonResponse
     {
@@ -61,17 +62,34 @@ class AssignmentController extends Controller
             $paginator = $baseQuery->paginate($perPage, ['*'], 'page', $page);
 
             $data = $paginator->getCollection()->map(function ($socio) use ($professorId) {
+                $socioPadronModel = SocioPadron::findOrFail($socio->id);
+                $user = $this->ensureUserFromSocioPadronSafe($socioPadronModel);
+                $psa = ProfessorStudentAssignment::query()->firstOrCreate(
+                    ['professor_id' => $professorId, 'student_id' => (int) $user->id],
+                    ['assigned_by' => $professorId, 'status' => 'active', 'start_date' => now()]
+                );
+
                 return [
-                    'id' => (int) $socio->id, // pseudo id
+                    // Backward compat
+                    'id' => (int) $socio->id,
                     'professor_id' => $professorId,
-                    'student_id' => (int) $socio->id, // pseudo
+                    'student_id' => (int) $socio->id,
                     'status' => 'active',
 
+                    // PHASE 1: Clear ID mapping
+                    '_meta' => [
+                        'socio_padron_id' => (int) $socio->id,
+                        'user_id' => (int) $user->id,
+                        'psa_id' => (int) $psa->id,
+                        'note' => 'Use user_id for studentTemplateAssignments(); use psa_id for template operations.',
+                    ],
+
                     'student' => [
-                        'id' => (int) $socio->id,
+                        'id' => (int) $user->id,
+                        'socio_padron_id' => (int) $socio->id,
                         'dni' => $socio->dni,
                         'name' => (string) ($socio->apynom ?? ''),
-                        'email' => null,
+                        'email' => $user->email,
                         'user_type' => 'socio',
                         'type_label' => 'Socio',
                         'socio_id' => (string) ($socio->sid ?? null),
@@ -80,8 +98,8 @@ class AssignmentController extends Controller
                         'saldo' => $socio->saldo,
                         'semaforo' => $socio->semaforo,
                         'hab_controles' => $socio->hab_controles,
-                        'foto_url' => null,
-                        'avatar_path' => null,
+                        'foto_url' => $user->foto_url,
+                        'avatar_path' => $user->avatar_path,
                     ],
 
                     'template_assignments' => [],
@@ -99,6 +117,10 @@ class AssignmentController extends Controller
             return response()->json($out);
 
         } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('myStudents error', [
+                'professor_id' => auth()->id(),
+                'message' => $e->getMessage(),
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Error al obtener estudiantes',
@@ -216,6 +238,7 @@ class AssignmentController extends Controller
 
     /**
      * Traer plantillas asignadas del alumno (por daily_assignments)
+     * PHASE 1: Support both users.id and socios_padron.id. Use gym_daily_templates.
      */
     public function studentTemplateAssignments(Request $request, int $studentId): JsonResponse
     {
@@ -245,28 +268,50 @@ class AssignmentController extends Controller
                     ], 403);
                 }
 
-                $user = $this->ensureUserFromSocioPadron($socio);
+                $user = $this->ensureUserFromSocioPadronSafe($socio);
             }
 
-            ProfessorStudentAssignment::query()->firstOrCreate(
-                ['professor_id' => $professorId, 'student_id' => (int) $user->id],
-                ['assigned_by' => $professorId, 'status' => 'active', 'start_date' => now()]
-            );
+            $psa = DB::transaction(function () use ($professorId, $user) {
+                return ProfessorStudentAssignment::query()->firstOrCreate(
+                    ['professor_id' => $professorId, 'student_id' => (int) $user->id],
+                    ['assigned_by' => $professorId, 'status' => 'active', 'start_date' => now()]
+                );
+            });
 
             $psaIds = ProfessorStudentAssignment::query()
                 ->where('professor_id', $professorId)
                 ->where('student_id', (int) $user->id)
+                ->where('status', 'active')
                 ->pluck('id')
                 ->map(fn ($v) => (int) $v)
                 ->values()
                 ->all();
 
-            $rows = DB::table('daily_assignments as da')
-                ->leftJoin('daily_templates as dt', 'dt.id', '=', 'da.daily_template_id')
+            if (empty($psaIds)) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [],
+                    'meta' => [
+                        'student_user_id' => (int) $user->id,
+                        'psa_ids_used' => [],
+                        'count' => 0,
+                    ],
+                ]);
+            }
+
+            $query = DB::table('daily_assignments as da')
                 ->whereIn('da.professor_student_assignment_id', $psaIds)
+                ->where('da.status', 'active')
                 ->orderByDesc('da.start_date')
-                ->select(['da.*', DB::raw('dt.title as daily_template_title')])
-                ->get();
+                ->select('da.*');
+
+            // Attempt to join templates; gracefully skip if table missing
+            if (\Illuminate\Support\Facades\Schema::hasTable('gym_daily_templates')) {
+                $query->leftJoin('gym_daily_templates as dt', 'dt.id', '=', 'da.daily_template_id')
+                    ->addSelect('dt.title as daily_template_title');
+            }
+
+            $rows = $query->get();
 
             return response()->json([
                 'success' => true,
@@ -279,6 +324,11 @@ class AssignmentController extends Controller
             ]);
 
         } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('studentTemplateAssignments error', [
+                'student_id' => $studentId,
+                'professor_id' => auth()->id(),
+                'error' => $e->getMessage(),
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Error al obtener plantillas del alumno',
@@ -288,75 +338,98 @@ class AssignmentController extends Controller
     }
 
     /**
-     * ✅ Ver una asignación (daily_assignments)
+     * Ver una asignación (daily_assignments)
+     * PHASE 1: Use gym_daily_templates; fail gracefully if missing.
      */
     public function show(int $assignmentId): JsonResponse
     {
-        $professorId = (int) auth()->id();
+        try {
+            $professorId = (int) auth()->id();
 
-        $row = DB::table('daily_assignments as da')
-            ->join('professor_student_assignments as psa', 'psa.id', '=', 'da.professor_student_assignment_id')
-            ->leftJoin('daily_templates as dt', 'dt.id', '=', 'da.daily_template_id')
-            ->where('da.id', $assignmentId)
-            ->where('psa.professor_id', $professorId)
-            ->select(['da.*', DB::raw('dt.title as daily_template_title')])
-            ->first();
+            $query = DB::table('daily_assignments as da')
+                ->join('professor_student_assignments as psa', 'psa.id', '=', 'da.professor_student_assignment_id')
+                ->where('da.id', $assignmentId)
+                ->where('psa.professor_id', $professorId)
+                ->select('da.*');
 
-        if (!$row) {
-            return response()->json(['success' => false, 'message' => 'Asignación no encontrada'], 404);
+            if (\Illuminate\Support\Facades\Schema::hasTable('gym_daily_templates')) {
+                $query->leftJoin('gym_daily_templates as dt', 'dt.id', '=', 'da.daily_template_id')
+                    ->addSelect('dt.title as daily_template_title');
+            }
+
+            $row = $query->first();
+
+            if (!$row) {
+                return response()->json(['success' => false, 'message' => 'Asignación no encontrada'], 404);
+            }
+
+            return response()->json(['success' => true, 'data' => $row]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('show error', ['assignment_id' => $assignmentId, 'error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Error al obtener asignación', 'error' => $e->getMessage()], 500);
         }
-
-        return response()->json(['success' => true, 'data' => $row]);
     }
 
     /**
-     * ✅ Actualizar asignación (daily_assignments)
+     * Actualizar asignación (daily_assignments)
+     * PHASE 1: Use gym_daily_templates; validate ownership.
      */
     public function updateAssignment(Request $request, int $assignmentId): JsonResponse
     {
-        $professorId = (int) auth()->id();
+        try {
+            $professorId = (int) auth()->id();
 
-        $validated = $request->validate([
-            'end_date' => 'nullable|date',
-            'frequency' => 'sometimes|array|min:1',
-            'frequency.*' => 'integer|between:0,6',
-            'professor_notes' => 'nullable|string|max:1000',
-            'status' => 'sometimes|in:active,paused,completed,cancelled',
-        ]);
+            $validated = $request->validate([
+                'end_date' => 'nullable|date',
+                'frequency' => 'sometimes|array|min:1',
+                'frequency.*' => 'integer|between:0,6',
+                'professor_notes' => 'nullable|string|max:1000',
+                'status' => 'sometimes|in:active,paused,completed,cancelled',
+            ]);
 
-        $row = DB::table('daily_assignments as da')
-            ->join('professor_student_assignments as psa', 'psa.id', '=', 'da.professor_student_assignment_id')
-            ->where('da.id', $assignmentId)
-            ->where('psa.professor_id', $professorId)
-            ->select(['da.*'])
-            ->first();
+            $row = DB::table('daily_assignments as da')
+                ->join('professor_student_assignments as psa', 'psa.id', '=', 'da.professor_student_assignment_id')
+                ->where('da.id', $assignmentId)
+                ->where('psa.professor_id', $professorId)
+                ->select(['da.*'])
+                ->first();
 
-        if (!$row) {
-            return response()->json(['success' => false, 'message' => 'Asignación no encontrada'], 404);
-        }
-
-        // Validación start/end contra lo que ya existe
-        $start = Carbon::parse($row->start_date);
-        if (!empty($validated['end_date'])) {
-            $end = Carbon::parse($validated['end_date']);
-            if ($end->lt($start)) {
-                return response()->json(['success' => false, 'message' => 'end_date debe ser >= start_date'], 422);
+            if (!$row) {
+                return response()->json(['success' => false, 'message' => 'Asignación no encontrada'], 404);
             }
+
+            $start = Carbon::parse($row->start_date);
+            if (!empty($validated['end_date'])) {
+                $end = Carbon::parse($validated['end_date']);
+                if ($end->lt($start)) {
+                    return response()->json(['success' => false, 'message' => 'end_date debe ser >= start_date'], 422);
+                }
+            }
+
+            $update = $validated;
+            if (array_key_exists('frequency', $update)) {
+                $update['frequency'] = json_encode($update['frequency']);
+            }
+            $update['updated_at'] = now();
+
+            DB::table('daily_assignments')->where('id', $assignmentId)->update($update);
+
+            $query = DB::table('daily_assignments')->where('id', $assignmentId)->select('daily_assignments.*');
+            if (\Illuminate\Support\Facades\Schema::hasTable('gym_daily_templates')) {
+                $query->leftJoin('gym_daily_templates as dt', 'dt.id', '=', 'daily_assignments.daily_template_id')
+                    ->addSelect('dt.title as daily_template_title');
+            }
+            $fresh = $query->first();
+
+            return response()->json(['success' => true, 'data' => $fresh]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('updateAssignment error', [
+                'assignment_id' => $assignmentId,
+                'professor_id' => auth()->id(),
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json(['success' => false, 'message' => 'Error al actualizar asignación', 'error' => $e->getMessage()], 422);
         }
-
-        $update = $validated;
-
-        if (array_key_exists('frequency', $update)) {
-            $update['frequency'] = json_encode($update['frequency']);
-        }
-
-        $update['updated_at'] = now();
-
-        DB::table('daily_assignments')->where('id', $assignmentId)->update($update);
-
-        $fresh = DB::table('daily_assignments')->where('id', $assignmentId)->first();
-
-        return response()->json(['success' => true, 'data' => $fresh]);
     }
 
     /**
@@ -423,63 +496,77 @@ class AssignmentController extends Controller
         return (int) $psa->id;
     }
 
-    private function ensureUserFromSocioPadron(SocioPadron $socio): User
+    /**
+     * PHASE 1: Create or update user from socios_padron with transaction safety.
+     * Uses DB::transaction + lockForUpdate to prevent race conditions.
+     */
+    private function ensureUserFromSocioPadronSafe(SocioPadron $socio): User
     {
-        $dniRaw = (string) ($socio->dni ?? '');
-        $dni = preg_replace('/\D+/', '', trim($dniRaw));
+        return DB::transaction(function () use ($socio) {
+            $lockedSocio = SocioPadron::lockForUpdate()->findOrFail($socio->id);
+            $dniRaw = (string) ($lockedSocio->dni ?? '');
+            $dni = preg_replace('/\D+/', '', trim($dniRaw));
+            $name = trim((string) ($lockedSocio->apynom ?? 'Socio'));
+            $sid  = $lockedSocio->sid ? (string) $lockedSocio->sid : null;
 
-        $name = trim((string) ($socio->apynom ?? 'Socio'));
-        $sid  = $socio->sid ? (string) $socio->sid : null;
+            $defaults = [
+                'is_admin' => 0,
+                'is_professor' => 0,
+                'account_status' => 'active',
+                'name' => $name !== '' ? $name : 'Socio',
+                'email' => null,
+                'socio_id' => $sid,
+                'socio_n'  => $sid,
+                'barcode'  => $lockedSocio->barcode,
+                'saldo'    => $lockedSocio->saldo ?? '0.00',
+                'semaforo' => $lockedSocio->semaforo ?? 1,
+                'estado_socio' => null,
+                'avatar_path' => null,
+                'foto_url' => null,
+            ];
 
-        $defaults = [
-            'is_admin' => 0,
-            'is_professor' => 0,
-            'account_status' => 'active',
-            'name' => $name !== '' ? $name : 'Socio',
-            'email' => null,
-            'socio_id' => $sid,
-            'socio_n'  => $sid,
-            'barcode'  => $socio->barcode,
-            'saldo'    => $socio->saldo ?? '0.00',
-            'semaforo' => $socio->semaforo ?? 1,
-            'estado_socio' => null,
-            'avatar_path' => null,
-            'foto_url' => null,
-        ];
-
-        if ($dni === '' || strtolower(trim($dniRaw)) === 'dni') {
-            $key = $socio->barcode ?: ('SID-' . (string)($socio->sid ?? $socio->id));
-
-            $user = User::query()->where('barcode', $key)->first();
-            if ($user) {
-                $user->fill($defaults);
-                $user->barcode = $key;
-                $user->save();
-                return $user;
+            if ($dni === '' || strtolower(trim($dniRaw)) === 'dni') {
+                $key = $lockedSocio->barcode ?: ('SID-' . (string)($lockedSocio->sid ?? $lockedSocio->id));
+                $user = User::query()->where('barcode', $key)->first();
+                if ($user) {
+                    // Preserve existing password, update other fields
+                    unset($defaults['password']);
+                    $user->fill($defaults);
+                    $user->save();
+                    \Illuminate\Support\Facades\Log::info('[USER] Updated from socio (barcode)', ['user_id' => $user->id, 'socio_id' => $lockedSocio->id]);
+                    return $user;
+                }
+                $syntheticDni = 'SOCIO-' . (string) $lockedSocio->id;
+                $create = $defaults;
+                $create['dni'] = $syntheticDni;
+                $create['barcode'] = $key;
+                $create['password'] = Hash::make($syntheticDni);
+                $newUser = User::create($create);
+                \Illuminate\Support\Facades\Log::info('[USER] Created from socio (synthetic dni)', ['user_id' => $newUser->id, 'socio_id' => $lockedSocio->id]);
+                return $newUser;
             }
 
-            $syntheticDni = 'SOCIO-' . (string) $socio->id;
+            $user = User::query()->where('dni', $dni)->first();
+            if (!$user) {
+                $newUser = User::create(array_merge($defaults, [
+                    'dni' => $dni,
+                    'password' => Hash::make($dni),
+                ]));
+                \Illuminate\Support\Facades\Log::info('[USER] Created from socio (dni)', ['user_id' => $newUser->id, 'socio_id' => $lockedSocio->id]);
+                return $newUser;
+            }
+            unset($defaults['password']);
+            $user->fill($defaults);
+            $user->dni = $dni;
+            $user->save();
+            \Illuminate\Support\Facades\Log::info('[USER] Updated from socio (dni)', ['user_id' => $user->id, 'socio_id' => $lockedSocio->id]);
+            return $user;
+        });
+    }
 
-            $create = $defaults;
-            $create['dni'] = $syntheticDni;
-            $create['barcode'] = $key;
-            $create['password'] = Hash::make($syntheticDni);
-
-            return User::create($create);
-        }
-
-        $user = User::query()->where('dni', $dni)->first();
-        if (!$user) {
-            return User::create(array_merge($defaults, [
-                'dni' => $dni,
-                'password' => Hash::make($dni),
-            ]));
-        }
-
-        $user->fill($defaults);
-        $user->dni = $dni;
-        $user->save();
-
-        return $user;
+    private function ensureUserFromSocioPadron(SocioPadron $socio): User
+    {
+        // Backward compat wrapper
+        return $this->ensureUserFromSocioPadronSafe($socio);
     }
 }
