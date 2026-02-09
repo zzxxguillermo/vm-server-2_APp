@@ -14,6 +14,7 @@ use App\Models\Gym\ProfessorStudentAssignment;
 use App\Models\Gym\TemplateAssignment;
 use App\Models\Gym\AssignmentProgress;
 use App\Models\SocioPadron; // ✅ si tu modelo está acá
+use Illuminate\Pagination\LengthAwarePaginator;
 
 
 class AssignmentController extends Controller
