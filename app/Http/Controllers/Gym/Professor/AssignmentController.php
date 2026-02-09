@@ -127,15 +127,15 @@ class AssignmentController extends Controller
     public function assignTemplate(Request $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'professor_student_assignment_id' => 'required|exists:professor_student_assignments,id',
-                'daily_template_id' => 'required|exists:gym_daily_templates,id',
-                'start_date' => 'required|date|after_or_equal:today',
-                'end_date' => 'nullable|date|after:start_date',
-                'frequency' => 'required|array|min:1',
-                'frequency.*' => 'integer|between:0,6', // 0=Domingo, 6=Sábado
-                'professor_notes' => 'nullable|string|max:1000'
-            ]);
+          $validated = $request->validate([
+  'professor_student_assignment_id' => 'required|integer|min:1', // 👈 NO exists acá
+  'daily_template_id' => 'required|integer|min:1',
+  'start_date' => 'nullable|date',
+  'end_date' => 'nullable|date|after_or_equal:start_date',
+  'frequency' => 'nullable|array|min:1',
+  'frequency.*' => 'integer|between:0,6',
+  'professor_notes' => 'nullable|string|max:1000',
+]);
 
             $validated['assigned_by'] = auth()->id();
 
