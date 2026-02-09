@@ -179,8 +179,7 @@ public function assignTemplate(Request $request): JsonResponse
  * Acepta:
  * - incomingId = professor_student_assignments.id (real)
  * - incomingId = socio_padron.id (porque myStudents lo devuelve como id y student_id)
- */
-private function resolveProfessorStudentAssignmentId(int $incomingId, int $professorId): int
+ */private function resolveProfessorStudentAssignmentId(int $incomingId, int $professorId): int
 {
     // Caso A) Vino un ID real de professor_student_assignments
     $psa = ProfessorStudentAssignment::query()
@@ -188,31 +187,36 @@ private function resolveProfessorStudentAssignmentId(int $incomingId, int $profe
         ->first();
 
     if ($psa) {
-        // Seguridad: debe pertenecer al profesor autenticado
         if ((int) $psa->professor_id !== $professorId) {
             abort(403, 'La asignación no pertenece a este profesor');
         }
         return (int) $psa->id;
     }
 
-    // Caso B) Vino socio_padron.id (student_id “fake”)
-    $studentId = $incomingId;
+    // Caso B) Vino socio_padron.id (NO es users.id)
+    $socioPadronId = $incomingId;
 
-    // (Opcional pero útil) validar que el socio esté asignado en professor_socio
+    // Validar que el socio esté asignado a este profesor
     $isAssigned = \DB::table('professor_socio')
         ->where('professor_id', $professorId)
-        ->where('socio_id', $studentId)
+        ->where('socio_id', $socioPadronId)
         ->exists();
 
     if (!$isAssigned) {
         abort(403, 'El socio no está asignado a este profesor');
     }
 
-    // Crear/obtener el professor_student_assignment real para ese socio
+    // Buscar socio en padron
+    $socio = SocioPadron::query()->findOrFail($socioPadronId);
+
+    // ✅ Crear/obtener User socio (para cumplir FK users.id)
+    $userSocio = $this->ensureUserFromSocioPadron($socio);
+
+    // Crear/obtener professor_student_assignment REAL usando users.id
     $psa = ProfessorStudentAssignment::query()->firstOrCreate(
         [
             'professor_id' => $professorId,
-            'student_id'   => $studentId,
+            'student_id'   => (int) $userSocio->id,   // ✅ FK OK
         ],
         [
             'assigned_by'  => $professorId,
@@ -223,7 +227,6 @@ private function resolveProfessorStudentAssignmentId(int $incomingId, int $profe
         ]
     );
 
-    // Si estaba inactiva, reactivar (opcional)
     if ($psa->status !== 'active') {
         $psa->status = 'active';
         $psa->end_date = null;
@@ -231,6 +234,63 @@ private function resolveProfessorStudentAssignmentId(int $incomingId, int $profe
     }
 
     return (int) $psa->id;
+}
+
+
+private function ensureUserFromSocioPadron(SocioPadron $socio): User
+{
+    // Reglas de “identidad” para matchear/crear:
+    // - Si ya tenés users con dni único, esto te evita duplicados.
+    $dni = trim((string) $socio->dni);
+
+    $defaults = [
+        'user_type' => 'socio',
+        'is_admin' => 0,
+        'is_professor' => 0,
+        'account_status' => 'active',
+        'name' => trim((string) ($socio->apynom ?? 'Socio')),
+        'email' => null,
+        'socio_id' => $socio->sid ? (string)$socio->sid : null,
+        'socio_n'  => $socio->sid ? (string)$socio->sid : null,
+        'barcode'  => $socio->barcode,
+        'saldo'    => $socio->saldo ?? '0.00',
+        'semaforo' => $socio->semaforo ?? 1,
+        'estado_socio' => null,
+        'avatar_path' => null,
+        'foto_url' => null,
+    ];
+
+    // Si dni viene vacío o basura, igual creamos por safety con una clave alternativa
+    if ($dni === '' || $dni === 'dni') {
+        // fallback por barcode o sid
+        $key = $socio->barcode ?: ('SID-' . (string)($socio->sid ?? $socio->id));
+        $user = User::query()->where('barcode', $key)->first();
+
+        if ($user) {
+            $user->fill($defaults);
+            $user->barcode = $key;
+            $user->save();
+            return $user;
+        }
+
+        $defaults['dni'] = 'SOCIO-' . (string) $socio->id;
+        $defaults['barcode'] = $key;
+
+        return User::create($defaults);
+    }
+
+    // ✅ Caso normal: matcheo por dni
+    $user = User::firstOrCreate(
+        ['dni' => $dni],
+        array_merge($defaults, ['dni' => $dni])
+    );
+
+    // Mantenerlo actualizado por si el padrón cambia
+    $user->fill($defaults);
+    $user->dni = $dni;
+    $user->save();
+
+    return $user;
 }
 
     /**
