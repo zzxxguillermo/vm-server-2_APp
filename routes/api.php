@@ -72,7 +72,7 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Admin - Gestión (protegido por rol 'admin')
-    Route::prefix('admin')->middleware('admin')->group(function () {
+    Route::prefix('admin')->middleware('professor')->group(function () {
 
         Route::get('users', [UserController::class, 'index']);
 
