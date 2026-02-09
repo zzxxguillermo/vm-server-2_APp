@@ -114,7 +114,7 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Admin Gym (protegido por rol 'professor')
-    Route::prefix('admin/gym')->group(function () {
+    Route::prefix('admin/gym')->middleware('professor')->group(function () {
         Route::apiResource('exercises', GymExerciseController::class);
         Route::apiResource('daily-templates', GymDailyTemplateController::class);
         Route::apiResource('weekly-templates', GymWeeklyTemplateController::class);
@@ -123,7 +123,7 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Profesor (protegido por rol 'professor')
-    Route::prefix('professor')->group(function () {
+    Route::prefix('professor')->middleware('professor')->group(function () {
 
         // ---- existente (plan/assignments)
         Route::get('my-students', [ProfessorAssignmentController::class, 'myStudents']);
@@ -149,7 +149,7 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Alias en español: 'profesor' — mantiene compatibilidad con frontend en español
-    Route::prefix('profesor')->group(function () {
+    Route::prefix('profesor')->middleware('professor')->group(function () {
         Route::get('my-students', [ProfessorAssignmentController::class, 'myStudents']);
         Route::get('my-stats', [ProfessorAssignmentController::class, 'myStats']);
 

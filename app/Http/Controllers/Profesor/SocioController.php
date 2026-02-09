@@ -10,28 +10,85 @@ use Illuminate\Support\Facades\DB;
 
 class SocioController extends Controller
 {
+    private function ensureProfessorOrAdmin($user): void
+    {
+        abort_unless(
+            $user && ((bool)($user->is_professor ?? false) || (bool)($user->is_admin ?? false) || (bool)($user->is_super_admin ?? false)),
+            403,
+            'No autorizado'
+        );
+    }
+
+    private function paginationMeta($paginator): array
+    {
+        return [
+            'current_page' => (int) $paginator->currentPage(),
+            'per_page'     => (int) $paginator->perPage(),
+            'total'        => (int) $paginator->total(),
+            'last_page'    => (int) $paginator->lastPage(),
+        ];
+    }
+
+    private function mapPadronItem($item): array
+    {
+        $apellido = '';
+        $nombre = '';
+
+        $apynom = (string) ($item->apynom ?? '');
+        if ($apynom !== '') {
+            if (strpos($apynom, ',') !== false) {
+                [$apellido, $nombre] = array_map('trim', explode(',', $apynom, 2));
+            } else {
+                $parts = array_map('trim', preg_split('/\s+/', $apynom));
+                $apellido = $parts[0] ?? '';
+                $nombre = implode(' ', array_slice($parts, 1));
+            }
+        }
+
+        return [
+            'id'        => (int) $item->id,      // id socios_padron
+            'dni'       => $item->dni,
+            'sid'       => $item->sid,
+            'socio_id'  => $item->sid,           // compat
+            'socio_n'   => $item->sid,           // compat
+            'apellido'  => $apellido,
+            'nombre'    => $nombre,
+            'apynom'    => $item->apynom,
+            'barcode'   => $item->barcode,
+            'saldo'     => $item->saldo,
+            'semaforo'  => $item->semaforo,
+            'hab_controles' => $item->hab_controles,
+            'estado_socio'  => null,
+            'avatar_path'   => null,
+            'foto_url'      => null,
+            'type_label'    => 'Socio',
+        ];
+    }
+
     /**
      * GET /api/profesor/socios
      * Lista socios (SocioPadron) asignados al profesor autenticado.
+     * Permite profesor/admin/super_admin (por si estás usando el panel con admin).
      */
     public function index(Request $request): JsonResponse
     {
-        $profesor = $request->user();
+        $user = $request->user();
 
-        if (!$profesor) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
         }
 
-        abort_unless((bool) $profesor->is_professor, 403, 'No autorizado: solo profesores');
+        // ✅ antes era “solo profesores” -> ahora permite admin/super_admin también
+        $this->ensureProfessorOrAdmin($user);
 
         $perPage = (int) $request->query('per_page', 50);
         $perPage = max(1, min(200, $perPage));
-        $q = trim((string) $request->query('q', ''));
+        $page    = (int) $request->query('page', 1);
+        $q       = trim((string) $request->query('q', ''));
 
-        // 👇 Pivot guarda socio_id = socios_padron.id, así que leemos DESDE socios_padron
         $query = SocioPadron::query()
             ->join('professor_socio', 'professor_socio.socio_id', '=', 'socios_padron.id')
-            ->where('professor_socio.professor_id', $profesor->id)
+            ->where('professor_socio.professor_id', $user->id)
             ->select([
                 'socios_padron.id',
                 'socios_padron.dni',
@@ -53,65 +110,38 @@ class SocioController extends Controller
             });
         }
 
-        $result = $query->paginate($perPage)->appends($request->query());
+        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
 
-        // Transform a “shape” compatible con tu frontend (similar a disponibles)
-        $data = $result->getCollection()->map(function ($item) {
-            $apellido = '';
-            $nombre = '';
+        $socios = $paginator->getCollection()->map(fn($item) => $this->mapPadronItem($item))->values();
 
-            $apynom = (string) ($item->apynom ?? '');
-            if ($apynom !== '') {
-                if (strpos($apynom, ',') !== false) {
-                    [$apellido, $nombre] = array_map('trim', explode(',', $apynom, 2));
-                } else {
-                    $parts = array_map('trim', preg_split('/\s+/', $apynom));
-                    $apellido = $parts[0] ?? '';
-                    $nombre = implode(' ', array_slice($parts, 1));
-                }
-            }
-
-            return [
-                'id' => (int) $item->id,            // OJO: id de socios_padron
-                'dni' => $item->dni,
-                'socio_id' => $item->sid,           // compat
-                'socio_n' => $item->sid,
-                'apellido' => $apellido,
-                'nombre' => $nombre,
-                'barcode' => $item->barcode,
-                'saldo' => $item->saldo,
-                'semaforo' => $item->semaforo,
-                'estado_socio' => null,
-                'avatar_path' => null,
-                'foto_url' => null,
-                'type_label' => 'Socio',
-            ];
-        });
-
-        $result->setCollection($data);
-
-        return response()->json(['success' => true, 'data' => $result]);
+        return response()->json([
+            'success' => true,
+            'socios' => $socios,
+            'pagination' => $this->paginationMeta($paginator),
+        ]);
     }
 
     /**
      * GET /api/profesor/socios/disponibles
      * SociosPadron NO asignados a ningún profesor.
+     * Permite profesor/admin/super_admin.
      */
     public function disponibles(Request $request): JsonResponse
     {
-        $profesor = $request->user();
+        $user = $request->user();
 
-        if (!$profesor) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
         }
 
-        abort_unless((bool) $profesor->is_professor, 403, 'No autorizado: solo profesores');
+        // ✅ antes era “solo profesores”
+        $this->ensureProfessorOrAdmin($user);
 
         $perPage = (int) $request->query('per_page', 50);
         $perPage = max(1, min(200, $perPage));
-        $q = trim((string) $request->query('q', ''));
+        $page    = (int) $request->query('page', 1);
+        $q       = trim((string) $request->query('q', ''));
 
-        // Subquery: ids de socios_padron ya asignados
         $assignedIdsSub = DB::table('professor_socio')
             ->select('socio_id')
             ->distinct();
@@ -139,42 +169,15 @@ class SocioController extends Controller
             });
         }
 
-        $padronResult = $query->paginate($perPage)->appends($request->query());
+        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
 
-        $data = $padronResult->getCollection()->map(function (SocioPadron $item) {
-            $apellido = '';
-            $nombre = '';
+        $socios = $paginator->getCollection()->map(fn($item) => $this->mapPadronItem($item))->values();
 
-            if (!empty($item->apynom)) {
-                if (strpos($item->apynom, ',') !== false) {
-                    [$apellido, $nombre] = array_map('trim', explode(',', $item->apynom, 2));
-                } else {
-                    $parts = array_map('trim', preg_split('/\s+/', $item->apynom));
-                    $apellido = $parts[0] ?? '';
-                    $nombre = implode(' ', array_slice($parts, 1));
-                }
-            }
-
-            return [
-                'id' => $item->id,
-                'dni' => $item->dni,
-                'socio_id' => $item->sid,
-                'socio_n' => $item->sid,
-                'apellido' => $apellido,
-                'nombre' => $nombre,
-                'barcode' => $item->barcode,
-                'saldo' => $item->saldo,
-                'semaforo' => $item->semaforo,
-                'estado_socio' => null,
-                'avatar_path' => null,
-                'foto_url' => null,
-                'type_label' => 'Socio',
-            ];
-        });
-
-        $padronResult->setCollection($data);
-
-        return response()->json(['success' => true, 'data' => $padronResult]);
+        return response()->json([
+            'success' => true,
+            'socios' => $socios,
+            'pagination' => $this->paginationMeta($paginator),
+        ]);
     }
 
     /**
@@ -183,26 +186,26 @@ class SocioController extends Controller
      */
     public function store(Request $request, $socioId): JsonResponse
     {
-        $profesor = $request->user();
+        $user = $request->user();
 
-        if (!$profesor) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
         }
 
-        abort_unless((bool) $profesor->is_professor, 403, 'No autorizado: solo profesores');
+        $this->ensureProfessorOrAdmin($user);
 
         $socio = SocioPadron::findOrFail($socioId);
 
         DB::table('professor_socio')->updateOrInsert(
-            ['professor_id' => $profesor->id, 'socio_id' => $socio->id],
-            ['assigned_by' => $profesor->id, 'updated_at' => now(), 'created_at' => now()]
+            ['professor_id' => $user->id, 'socio_id' => $socio->id],
+            ['assigned_by' => $user->id, 'updated_at' => now(), 'created_at' => now()]
         );
 
         return response()->json([
             'success' => true,
             'message' => 'Socio asignado',
             'data' => [
-                'professor_id' => $profesor->id,
+                'professor_id' => $user->id,
                 'socio_padron_id' => $socio->id,
                 'dni' => $socio->dni,
                 'sid' => $socio->sid,
@@ -216,18 +219,18 @@ class SocioController extends Controller
      */
     public function destroy(Request $request, $socioId): JsonResponse
     {
-        $profesor = $request->user();
+        $user = $request->user();
 
-        if (!$profesor) {
+        if (!$user) {
             return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
         }
 
-        abort_unless((bool) $profesor->is_professor, 403, 'No autorizado: solo profesores');
+        $this->ensureProfessorOrAdmin($user);
 
         $socio = SocioPadron::findOrFail($socioId);
 
         $deleted = DB::table('professor_socio')
-            ->where('professor_id', $profesor->id)
+            ->where('professor_id', $user->id)
             ->where('socio_id', $socio->id)
             ->delete();
 
@@ -239,7 +242,7 @@ class SocioController extends Controller
             'success' => true,
             'message' => 'Socio desasignado',
             'data' => [
-                'professor_id' => $profesor->id,
+                'professor_id' => $user->id,
                 'socio_padron_id' => $socio->id,
                 'dni' => $socio->dni,
                 'sid' => $socio->sid,
