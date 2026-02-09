@@ -23,77 +23,64 @@ class AssignmentController extends Controller
     /**
      * Obtener mis estudiantes asignados
      */
-    public function myStudents(Request $request): JsonResponse
-    {
-        try {
-            $students = $this->assignmentService->getProfessorStudents(
-                auth()->id(),
-                $this->buildFilters($request)
-            );
+   public function myStudents(Request $request): JsonResponse
+{
+    try {
+        // Si querés forzarlo siempre, eliminá este if y dejá solo el bloque socios.
+        $source = (string) $request->query('source', '');
 
-            return response()->json($students);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'message' => 'Error al obtener estudiantes',
-                'error' => $e->getMessage()
-            ], 500);
+        if ($source === 'socios') {
+            $perPage = (int) $request->query('per_page', 20);
+            $perPage = max(1, min(200, $perPage));
+            $page    = (int) $request->query('page', 1);
+            $q       = trim((string) $request->query('search', $request->query('q', '')));
+
+            $query = SocioPadron::query()
+                ->join('professor_socio', 'professor_socio.socio_id', '=', 'socios_padron.id')
+                ->where('professor_socio.professor_id', auth()->id())
+                ->select([
+                    'socios_padron.id',
+                    'socios_padron.dni',
+                    'socios_padron.sid',
+                    'socios_padron.apynom',
+                    'socios_padron.barcode',
+                    'socios_padron.saldo',
+                    'socios_padron.semaforo',
+                    'socios_padron.hab_controles',
+                ])
+                ->orderBy('socios_padron.apynom')
+                ->orderBy('socios_padron.dni');
+
+            if ($q !== '') {
+                $query->where(function ($w) use ($q) {
+                    $w->where('socios_padron.dni', 'like', "%{$q}%")
+                      ->orWhere('socios_padron.sid', 'like', "%{$q}%")
+                      ->orWhere('socios_padron.apynom', 'like', "%{$q}%");
+                });
+            }
+
+            $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+
+            // Devolvemos en el MISMO formato paginator que espera el front (current_page, data, total, etc.)
+            return response()->json($paginator);
         }
+
+        // Default viejo: students reales
+        $students = $this->assignmentService->getProfessorStudents(
+            auth()->id(),
+            $this->buildFilters($request)
+        );
+
+        return response()->json($students);
+
+    } catch (\Throwable $e) {
+        return response()->json([
+            'message' => 'Error al obtener estudiantes',
+            'error' => $e->getMessage()
+        ], 500);
     }
+}
 
-    /**
-     * GET /api/professor/students/{studentId}/template-assignments
-     * Listar las asignaciones de plantillas de un alumno asignado a este profesor
-     */
-    public function studentTemplateAssignments(Request $request, int $studentId): JsonResponse
-    {
-        try {
-            if ($studentId <= 0) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'El ID del alumno debe ser un entero válido.'
-                ], 422);
-            }
-
-            $student = User::query()->find($studentId);
-            if (!$student) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Alumno no encontrado.'
-                ], 404);
-            }
-
-            // Verificar que el alumno esté asignado al profesor autenticado
-            $asignacionActiva = ProfessorStudentAssignment::query()
-                ->where('professor_id', auth()->id())
-                ->where('student_id', $studentId)
-                ->where('status', 'active')
-                ->exists();
-
-            if (!$asignacionActiva) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Alumno no asignado a este profesor.'
-                ], 403);
-            }
-
-            $filters = $this->buildFilters($request);
-
-            // Service debe devolver lo que el front espera (array/collection/paginator)
-            $assignments = $this->assignmentService->getStudentTemplateAssignments($studentId, $filters);
-
-            return response()->json([
-                'success' => true,
-                'data' => $assignments
-            ], 200);
-
-        } catch (\Throwable $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Error al obtener las planillas',
-                'error' => $e->getMessage()
-            ], 500);
-        }
-    }
 
     /**
      * Asignar plantilla a estudiante
