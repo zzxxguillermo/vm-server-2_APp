@@ -13,6 +13,8 @@ use App\Models\User;
 use App\Models\Gym\ProfessorStudentAssignment;
 use App\Models\Gym\TemplateAssignment;
 use App\Models\Gym\AssignmentProgress;
+use App\Models\SocioPadron; // ✅ si tu modelo está acá
+
 
 class AssignmentController extends Controller
 {
