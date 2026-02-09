@@ -10,6 +10,8 @@ use Carbon\Carbon;
 
 // Models
 use App\Models\User;
+use App\Models\SocioPadron;
+use Illuminate\Pagination\LengthAwarePaginator;
 use App\Models\Gym\ProfessorStudentAssignment;
 use App\Models\Gym\TemplateAssignment;
 use App\Models\Gym\AssignmentProgress;
