@@ -236,15 +236,12 @@ public function assignTemplate(Request $request): JsonResponse
     return (int) $psa->id;
 }
 
-
 private function ensureUserFromSocioPadron(SocioPadron $socio): User
 {
-    // Reglas de “identidad” para matchear/crear:
-    // - Si ya tenés users con dni único, esto te evita duplicados.
     $dni = trim((string) $socio->dni);
 
     $defaults = [
-        'user_type' => 'socio',
+        // ⚠️ NO seteamos user_type porque es Enum y "socio" no existe
         'is_admin' => 0,
         'is_professor' => 0,
         'account_status' => 'active',
@@ -260,9 +257,8 @@ private function ensureUserFromSocioPadron(SocioPadron $socio): User
         'foto_url' => null,
     ];
 
-    // Si dni viene vacío o basura, igual creamos por safety con una clave alternativa
-    if ($dni === '' || $dni === 'dni') {
-        // fallback por barcode o sid
+    // DNI inválido / basura -> fallback
+    if ($dni === '' || strtolower($dni) === 'dni') {
         $key = $socio->barcode ?: ('SID-' . (string)($socio->sid ?? $socio->id));
         $user = User::query()->where('barcode', $key)->first();
 
@@ -279,19 +275,19 @@ private function ensureUserFromSocioPadron(SocioPadron $socio): User
         return User::create($defaults);
     }
 
-    // ✅ Caso normal: matcheo por dni
+    // Caso normal: match por dni
     $user = User::firstOrCreate(
         ['dni' => $dni],
         array_merge($defaults, ['dni' => $dni])
     );
 
-    // Mantenerlo actualizado por si el padrón cambia
     $user->fill($defaults);
     $user->dni = $dni;
     $user->save();
 
     return $user;
 }
+
 
     /**
      * Ver detalles de una asignación de plantilla
