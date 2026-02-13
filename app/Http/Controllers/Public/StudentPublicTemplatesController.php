@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Services\PublicAccess\GymShareTokenException;
 use App\Services\PublicAccess\GymShareTokenValidator;
+use App\Support\GymSocioMaterializer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -112,6 +113,14 @@ class StudentPublicTemplatesController extends Controller
                 }
             }
         }
+
+        if (!$user) {
+			try {
+				$user = GymSocioMaterializer::materializeByDniOrSid((string) $dni);
+			} catch (\Throwable $e) {
+				// Mantener el comportamiento actual: devolver 404 si no se puede materializar
+			}
+		}
 
         if (!$user) {
             return response()->json([
