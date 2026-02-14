@@ -198,6 +198,8 @@ Route::prefix('sys')->group(function () {
 Route::prefix('public')->group(function () {
     Route::get('student/my-templates', [StudentPublicTemplatesController::class, 'myTemplates'])
         ->middleware('throttle:30,1');
+    Route::get('student/template/{templateAssignmentId}/details', [StudentPublicTemplatesController::class, 'templateDetails'])
+        ->middleware('throttle:30,1');
 });
 
 Route::middleware('auth:sanctum')->prefix('sys')->group(function () {

@@ -29,7 +29,10 @@ class AssignmentController extends Controller
             if (!$professorAssignment) {
                 return response()->json([
                     'message' => 'No tienes un profesor asignado',
-                    'data' => []
+                    'data' => [
+                        'professor' => null,
+                        'templates' => [],
+                    ],
                 ]);
             }
             
