@@ -100,56 +100,68 @@ class AssignmentController extends Controller
     {
         try {
             $user = auth()->user();
-            
+
             $templateAssignment = TemplateAssignment::with([
                 'dailyTemplate.exercises.exercise',
                 'dailyTemplate.exercises.sets',
                 'professorStudentAssignment.professor',
                 'professorStudentAssignment.student'
-            ])
-            ->whereHas('professorStudentAssignment', function($query) use ($user) {
-                $query->where('student_id', $user->id);
-            })
-            ->findOrFail($templateAssignmentId);
-            
+            ])->find($templateAssignmentId);
+
+            if (!$templateAssignment) {
+                return response()->json([
+                    'message' => 'Asignación no encontrada',
+                ], 404);
+            }
+
+            $psa = $templateAssignment->professorStudentAssignment;
+            if (!$psa || (int) $psa->student_id !== (int) $user->id) {
+                return response()->json([
+                    'message' => 'No tienes acceso a esta asignación',
+                ], 403);
+            }
+
             $template = $templateAssignment->dailyTemplate;
+            $templateExercises = $template ? $template->exercises : collect();
+            $professor = $psa ? $psa->professor : null;
+            $frequency = $templateAssignment->frequency;
             
             $response = [
                 'assignment_info' => [
                     'id' => $templateAssignment->id,
-                    'start_date' => $templateAssignment->start_date->toDateString(),
+                    'start_date' => $templateAssignment->start_date ? $templateAssignment->start_date->toDateString() : null,
                     'end_date' => $templateAssignment->end_date ? $templateAssignment->end_date->toDateString() : null,
-                    'frequency' => $templateAssignment->frequency,
-                    'frequency_days' => $this->formatFrequencyDays($templateAssignment->frequency),
+                    'frequency' => $frequency,
+                    'frequency_days' => $this->formatFrequencyDays($frequency ?? []),
                     'professor_notes' => $templateAssignment->professor_notes,
                     'status' => $templateAssignment->status,
                     'assigned_by' => [
-                        'id' => $templateAssignment->professorStudentAssignment->professor->id,
-                        'name' => $templateAssignment->professorStudentAssignment->professor->name,
-                        'email' => $templateAssignment->professorStudentAssignment->professor->email
+                        'id' => $professor ? $professor->id : null,
+                        'name' => $professor ? $professor->name : null,
+                        'email' => $professor ? $professor->email : null
                     ]
                 ],
-                'template' => [
+                'template' => $template ? [
                     'id' => $template->id,
                     'title' => $template->title,
                     'goal' => $template->goal,
                     'level' => $template->level,
                     'estimated_duration_min' => $template->estimated_duration_min,
                     'tags' => $template->tags,
-                    'created_at' => $template->created_at->toISOString()
-                ],
-                'exercises' => $template->exercises->map(function ($templateExercise) {
+                    'created_at' => $template->created_at ? $template->created_at->toISOString() : null
+                ] : null,
+                'exercises' => $templateExercises->map(function ($templateExercise) {
                     return [
                         'id' => $templateExercise->id,
                         'order' => $templateExercise->order,
                         'exercise' => [
-                            'id' => $templateExercise->exercise->id,
-                            'name' => $templateExercise->exercise->name,
-                            'description' => $templateExercise->exercise->description,
-                            'target_muscle_groups' => $templateExercise->exercise->target_muscle_groups,
-                            'equipment' => $templateExercise->exercise->equipment,
-                            'difficulty_level' => $templateExercise->exercise->difficulty_level,
-                            'instructions' => $templateExercise->exercise->instructions
+                            'id' => $templateExercise->exercise ? $templateExercise->exercise->id : null,
+                            'name' => $templateExercise->exercise ? $templateExercise->exercise->name : null,
+                            'description' => $templateExercise->exercise ? $templateExercise->exercise->description : null,
+                            'target_muscle_groups' => $templateExercise->exercise ? $templateExercise->exercise->target_muscle_groups : null,
+                            'equipment' => $templateExercise->exercise ? $templateExercise->exercise->equipment : null,
+                            'difficulty_level' => $templateExercise->exercise ? $templateExercise->exercise->difficulty_level : null,
+                            'instructions' => $templateExercise->exercise ? $templateExercise->exercise->instructions : null
                         ],
                         'sets' => $templateExercise->sets->map(function ($set) {
                             return [
@@ -237,18 +249,25 @@ class AssignmentController extends Controller
                     'day_number' => $currentDate->day,
                     'has_workouts' => $dayAssignments->count() > 0,
                     'assignments' => $dayAssignments->map(function($assignment) {
+                        $dailyTemplate = $assignment->dailyTemplate;
+                        $professor = $assignment->professorStudentAssignment
+                            ? $assignment->professorStudentAssignment->professor
+                            : null;
+
                         return [
                             'id' => $assignment->id,
-                            'daily_template' => [
-                                'id' => $assignment->dailyTemplate->id,
-                                'title' => $assignment->dailyTemplate->title,
-                                'goal' => $assignment->dailyTemplate->goal,
-                                'level' => $assignment->dailyTemplate->level,
-                                'estimated_duration_min' => $assignment->dailyTemplate->estimated_duration_min
-                            ],
+                            'template_assignment_id' => $assignment->id,
+                            'daily_template' => $dailyTemplate ? [
+                                'id' => $dailyTemplate->id,
+                                'title' => $dailyTemplate->title,
+                                'goal' => $dailyTemplate->goal,
+                                'level' => $dailyTemplate->level,
+                                'estimated_duration_min' => $dailyTemplate->estimated_duration_min
+                            ] : null,
                             'professor_notes' => $assignment->professor_notes,
                             'assigned_by' => [
-                                'name' => $assignment->professorStudentAssignment->professor->name
+                                'id' => $professor ? $professor->id : null,
+                                'name' => $professor ? $professor->name : null
                             ]
                         ];
                     })->values()
