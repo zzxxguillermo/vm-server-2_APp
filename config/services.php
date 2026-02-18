@@ -56,4 +56,9 @@ return [
         'demo_key' => env('PUBLIC_TEMPLATES_DEMO_KEY'),
     ],
 
+    'gym_share_token' => [
+        'secret' => env('GYM_SHARE_SECRET'),
+        'ttl_seconds' => (int) env('GYM_SHARE_TTL_SECONDS', 120),
+    ],
+
 ];

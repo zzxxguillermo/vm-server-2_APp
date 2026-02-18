@@ -200,6 +200,8 @@ Route::prefix('public')->group(function () {
         ->middleware('throttle:30,1');
     Route::get('student/template/{templateAssignmentId}/details', [StudentPublicTemplatesController::class, 'templateDetails'])
         ->middleware('throttle:30,1');
+    Route::get('student/my-weekly-calendar', [StudentPublicTemplatesController::class, 'myWeeklyCalendar'])
+        ->middleware('throttle:30,1');
 });
 
 Route::middleware('auth:sanctum')->prefix('sys')->group(function () {

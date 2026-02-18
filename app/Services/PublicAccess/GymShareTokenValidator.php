@@ -27,7 +27,7 @@ class GymShareTokenValidator
         $ts = (int) $tsString;
         $now = time();
 
-        $ttl = (int) env('GYM_SHARE_TTL_SECONDS', 120);
+        $ttl = config('services.gym_share_token.ttl_seconds', 120);
         if ($ttl <= 0) {
             $ttl = 120;
         }
@@ -40,7 +40,7 @@ class GymShareTokenValidator
             throw new GymShareTokenException('future_ts');
         }
 
-        $secret = env('GYM_SHARE_SECRET');
+        $secret = config('services.gym_share_token.secret');
         if (empty($secret)) {
             // Misconfiguration: treat as server error upstream
             throw new GymShareTokenException('missing_secret');
